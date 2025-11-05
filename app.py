@@ -31,7 +31,7 @@ if input_stock_code:
     # show df_stock_list_filterd if not empty else show "no stock found"
     if not df_stock_list_filterd.empty:
         st.dataframe(df_stock_list_filterd, width="content", 
-                     height=len(df_stock_list_filterd)*35 if len(df_stock_list_filterd)<5 else 5*35) # row height is 35
+                     height=(len(df_stock_list_filterd))*35 if len(df_stock_list_filterd)<5 else 5*35) # row height is 35
     else:
         st.error('no stock found')
 st.markdown("---")
