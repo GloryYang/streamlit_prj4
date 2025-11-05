@@ -50,7 +50,8 @@ def get_profit_sheet_by_quarterly(code: str, source: str = 'ths') -> pd.DataFram
 
 
 st.set_page_config(page_title="📈Finicial Report", layout="wide")
-col1, col2 = st.columns(2)
+st.title("📈Finiacal Reprot Analysis")
+
 with st.sidebar:
     data_source = st.selectbox('select data source:', ['ths', 'east money'], 0)
 
