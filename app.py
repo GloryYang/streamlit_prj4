@@ -23,7 +23,7 @@ def add_prefix_to_code(code: str) -> str:
 
 @st.cache_data
 def get_stock_list() -> pd.DataFrame:
-    df=pd.read_csv(r'..\stock_list1.csv', header=0)
+    df=pd.read_csv(r'stock_list1.csv', header=0)
     return df
 
 # 资产负债表 - 报告期
