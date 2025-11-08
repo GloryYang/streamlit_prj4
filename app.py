@@ -12,6 +12,19 @@ import time, os
 # data source used by akshare - 'shown on web': 'called by function'
 DATA_SOURCE = {'ths': 'ths', 'east money': 'em'}
 
+# report name in varable reports = {report_name: report_df, ...}
+# BALANCE_BY_REPORT = 'balance_sheet_by_report'
+# PROFIT_BY_REPORT = 'profit_sheet_by_report'
+# PROFIT_BY_QUARTER = 'profit_sheet_by_quarter'
+# CASH_BY_REPORT = 'cash_sheet_by_report'
+# CASH_BY_QUARTER = 'cash_sheet_by_quarter'
+BALANCE_BY_REPORT = '资产负债表-报告期'
+PROFIT_BY_REPORT = '利润表-年度'
+PROFIT_BY_QUARTER = '利润表-报告期'
+CASH_BY_REPORT = '现金流量表-年度'
+CASH_BY_QUARTER = '现金流量表-报告期'
+
+
 # add 'SH' or 'SZ' as code prefix for east money data source
 def add_prefix_to_code(code: str) -> str:
     code = code.strip()
@@ -23,7 +36,7 @@ def add_prefix_to_code(code: str) -> str:
 
 @st.cache_data
 def get_stock_list() -> pd.DataFrame:
-    df=pd.read_csv(r'stock_list1.csv', header=0)
+    df=pd.read_csv(r'..\stock_list1.csv', header=0)
     return df
 
 # 资产负债表 - 报告期
@@ -73,27 +86,28 @@ def get_cash_sheet_by_quarterly(code: str, source: str = 'ths') -> pd.DataFrame:
 # thread function to get report
 def get_all_reports_concurrently(code: str, source: str = 'ths', max_worker: int =5) -> Dict[str, pd.DataFrame]:
     # five reports as 
-    tasks = [('balance_sheet_by_report', get_balance_sheet_by_report, (code, source)),
-             ('profit_sheet_by_report', get_profit_sheet_by_report, (code, source)),
-             ('profit_sheet_by_quarterly', get_profit_sheet_by_quarterly, (code, source)),
-             ('cash_sheet_by_report',get_cash_sheet_by_report, (code, source)),
-             ('cash_sheet_by_quarterly', get_cash_sheet_by_quarterly, (code, source))]
-    
+    tasks = [(BALANCE_BY_REPORT, get_balance_sheet_by_report, (code, source)),
+             (PROFIT_BY_REPORT, get_profit_sheet_by_report, (code, source)),
+             (PROFIT_BY_QUARTER, get_profit_sheet_by_quarterly, (code, source)),
+             (CASH_BY_REPORT,get_cash_sheet_by_report, (code, source)),
+             (CASH_BY_QUARTER, get_cash_sheet_by_quarterly, (code, source))]
+
     results= {}
     futures_to_tasks = {}
     with ThreadPoolExecutor(max_workers=max_worker) as executor:
             for name, func, args in tasks:
-                futures_to_tasks[executor.submit(func, *args)] = name
+                futures_to_tasks[executor.submit(func, *args)] = (name,func.__name__, *args)
             # futures_to_tasks = {executor.submit(func, *args): name for name, func, args in tasks}
 
     
     for future in as_completed(futures_to_tasks.keys()):
-        report_name = futures_to_tasks[future]
+        report_name, func_name, code, source = futures_to_tasks[future]
         try:
+            # st.write(report_name, func_name, code, source )
             results[report_name] = future.result()
         except Exception as e:
             # 捕获异常，返回空 DataFrame
-            st.error(f"❌ {report_name}（{source}）抓取失败：{str(e)}")
+            st.error(f"❌ {report_name}下载失败，参数 （{code}，{source}）。错误代码：{str(e)}")
             results[report_name] = pd.DataFrame()
 
     return results
@@ -154,7 +168,7 @@ else:
     stock_code = df_stock_list_filterd.iloc[stock_selected_row, 0]
     stock_name = df_stock_list_filterd.iloc[stock_selected_row, 1] 
     
-st.subheader(f'📊 {stock_name}({stock_code}) 财务报表分析') # get stock code by stock_selected_row
+st.subheader(f'📊 {stock_name}({stock_code}) 财务报表分析 - {st_data_source}') # get stock code by stock_selected_row
 
 
 with st.spinner("⏳ 正在下载数据，请稍候..."):
