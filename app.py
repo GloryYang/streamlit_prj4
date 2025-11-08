@@ -159,13 +159,10 @@ st.subheader(f'📊 {stock_name}({stock_code}) 财务报表分析') # get stock 
 
 with st.spinner("⏳ 正在下载数据，请稍候..."):
     # stock_balance_sheet_by_report = get_balance_sheet_by_report(stock_code, DATA_SOURCE[st_data_source])
-    reports = get_all_reports_concurrently(stock_code, st_data_source)
+    reports = get_all_reports_concurrently(stock_code, DATA_SOURCE[st_data_source])
 st.success("✅ 数据下载完成！")
 
 for name, df in reports.items():
     with st.expander(f'{name}'):
-        df = df.astype(str).T
-        df.columns = df.iloc[0]
-        df = df.iloc[2:]
-        st.dataframe(df)
+        st.dataframe(df.astype(str).T)
 
