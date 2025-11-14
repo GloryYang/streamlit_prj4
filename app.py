@@ -242,6 +242,8 @@ for report_name, df in reports.items():
 for report_name, df in reports_quarter.items():
     with st.expander(f'{report_name}'):
         df_filtered = df
+        if st_na_invisible:
+            df_filtered = df_filtered.dropna(how='all', axis=1)
         # 格式化'报告期'列显示格式
         df_filtered = df_filtered.map(num_to_str)
         df_filtered = df_filtered.assign(报告期=df_filtered['报告期'].dt.strftime('%Y-%m-%d'))
