@@ -59,6 +59,8 @@ def format_report(df: pd.DataFrame, df_col_maps: pd.DataFrame, source: str='em')
     # remove east money YOY lines
     if(source=='em'):
         df = df[[col for col in df.columns if not col.endswith('YOY')]]
+        # format number to float
+        df = df.map(lambda v: float(v) if isinstance(v, (float, int)) else v)
     # convet ths data to number
     if(source=='ths'):
         # ths 原始数据空值为False，把False用np.nan替代
@@ -66,6 +68,20 @@ def format_report(df: pd.DataFrame, df_col_maps: pd.DataFrame, source: str='em')
         df = df.mask(df==False, np.nan)
         # ths利润表 资产减值损失，信用减值损 的取值与em和sina是反的，用的话需要取反
         df = df.map(str_to_num)
+    if(source=='sina'):
+        # format number to float
+        df = df.map(lambda v: float(v) if isinstance(v, (float, int)) else v)
 
-    df = df.map(num_to_str)
+    # df = df.map(num_to_str)   # 仅用于测试，格式化成数字更方面后续的计算
     return df
+
+# return quarter report. df need to format as number, report_date_col_name need to format as pd.to_datetime
+def get_quarter_report(df: pd.DataFrame, report_date_col_name: str) -> pd.DataFrame:
+    df_number = df.select_dtypes(include=['float', 'int']) 
+    # em, ths, sina的时间都是降序，所以用 diff(-1)。所有行都减后面一行的数据
+    df_q = df_number.diff(-1, axis=0) 
+    mask_Q1 = df[report_date_col_name].dt.month == 3
+    df_q[mask_Q1] = df_number[mask_Q1]   # 得到Q1行mask，恢复Q1行的数据 
+    
+    df_q = pd.concat([df[report_date_col_name], df_q], axis=1)  # 把报告期列加到最前面
+    return df_q
