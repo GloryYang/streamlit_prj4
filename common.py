@@ -170,7 +170,7 @@ def plot_bar_quarter_group_px(df: pd.DataFrame, col: str):
     col_pct = col+'_同比'
     #df[col_pct] = df[col].pct_change(-4)*100
     df[col_pct] = safe_yoy(df[col], periods=-4)
-    fig1 = px.bar(df, x=YEAR, y=col, color=QUARTER, barmode='group', height =300,
+    fig1 = px.bar(df, x=YEAR, y=col, color=QUARTER, barmode='group', height =250,
                 text=df[col].map(value_to_str), category_orders={QUARTER: ['Q1', 'Q2', 'Q3', 'Q4']})
     fig1.update_layout(barmode='group', bargap=0.15,
         legend=dict(
@@ -192,7 +192,7 @@ def plot_bar_quarter_group_px(df: pd.DataFrame, col: str):
     # fig1.update_yaxes(showgrid=True)
 
     # df_pct = df.dropna()
-    fig2 = px.bar(df, x=YEAR, y=col_pct, color=QUARTER, barmode='group', height =300,
+    fig2 = px.bar(df, x=YEAR, y=col_pct, color=QUARTER, barmode='group', height =250,
                 text=df[col_pct].map(value_to_str), category_orders={QUARTER: ['Q1', 'Q2', 'Q3', 'Q4']})
     fig2.update_layout(barmode='group', bargap=0.15,
         legend=dict(
@@ -262,6 +262,7 @@ def plot_bar_quarter_group_plt(df: pd.DataFrame, col: str):
 
 
     
+
 
 
 
