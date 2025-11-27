@@ -152,7 +152,7 @@ def get_quarter_report(df: pd.DataFrame, report_date_col_name: str) -> pd.DataFr
 # plot bar chart grouped by quarter. x is year, y is col data. fig1 is col data, fig2 is data of col.pct_change(-4)
 def plot_bar_quarter_group_px(df: pd.DataFrame, col: str):
     col_pct = col+'_同比'
-    df[col_pct] = df[col].pct_change(-4)
+    df[col_pct] = df[col].pct_change(-4)*100
     fig1 = px.bar(df, x=YEAR, y=col, color=QUARTER, barmode='group', 
                 text=df[col].map(value_to_str), category_orders={QUARTER: ['Q1', 'Q2', 'Q3', 'Q4']})
     fig1.update_layout(barmode='group', bargap=0.15,
@@ -245,3 +245,4 @@ def plot_bar_quarter_group_plt(df: pd.DataFrame, col: str):
 
 
     
+
