@@ -235,6 +235,7 @@ df_profit['核心利润'] = df_profit.eval(
     "`管理费用` - `研发费用` - `财务费用`")
 # 找到“营业总收入”的位置
 idx = df_profit.columns.get_loc('营业总收入')
+df_profit.insert(idx + 1, '净利润', df_profit.pop('净利润'))
 # 插入“毛利润”，位置在营业总收入后面
 df_profit.insert(idx + 1, '毛利润', df_profit.pop('毛利润'))
 # 再插入“核心利润”，放在毛利润后面
