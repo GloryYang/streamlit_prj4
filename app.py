@@ -344,5 +344,12 @@ with tab3_tables:
             df_filtered.columns = df_filtered.iloc[0]
             df_filtered = df_filtered[1:]
             # 显示，空值替换为 '-'
-            st.dataframe(df_filtered.map(value_to_str))
+            st.dataframe(df_filtered.map(value_to_str),
+                    column_config={
+                    "_index": st.column_config.Column(
+                    "序号",  # 可以在这里设置索引列的新标题
+                    width="small",  # 调整宽度，例如 "small", "medium", "large"
+                    ),
+                    # 也可以在这里配置其他数据列...
+                    })
 
