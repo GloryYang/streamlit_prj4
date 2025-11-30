@@ -207,6 +207,8 @@ if '净利润' in df.columns:
     df['*净利润'] = df['净利润']
 if '归母净利润' in df.columns:
     df['*归母净利润'] = df['归母净利润']
+if '*扣非净利润' in df.columns:
+    df['*扣非净利润'] = df['扣非净利润']
 # 需判断key_cols是否在df中存在
 key_cols = [col for col in ['*营业总收入', '*毛利润', '*核心利润', '*净利润', '*归母净利润'] if col in df.columns]
 for idx, col in enumerate(key_cols):
