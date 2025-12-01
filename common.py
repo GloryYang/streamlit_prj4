@@ -24,6 +24,7 @@ CASH_BY_QUARTER = '现金流量表-单季度'
 PROFIT_PCT_BY_REPORT = '利润表-报告期同比'
 PROFIT_PCT_BY_QUARTER = '利润表-单季度同比'
 
+CROSS_REPORT = '综合分析'
 # PROFIT = '利润表'
 # CASH = '现金流量表'
 # BALANCE = '资产负债表'
@@ -38,6 +39,7 @@ reports = {PROFIT_BY_REPORT: pd.DataFrame(),       # 经过格式化的原始数
            CASH_BY_QUARTER: pd.DataFrame(),        #计算得到的单季度数据
            PROFIT_PCT_BY_REPORT: pd.DataFrame(),   #计算得到利润表报告期同比数据
            PROFIT_PCT_BY_QUARTER: pd.DataFrame(),  #计算得到利润表单季度同比数据
+           CROSS_REPORT: pd.DataFrame(),
            }
 # 经过sidebar选项筛选的报表数据，用于可视化显示
 reports_filtered = {PROFIT_BY_REPORT: pd.DataFrame(),       # 经过格式化的原始数据
@@ -48,6 +50,7 @@ reports_filtered = {PROFIT_BY_REPORT: pd.DataFrame(),       # 经过格式化的
                     CASH_BY_QUARTER: pd.DataFrame(),        #计算得到的单季度数据
                     PROFIT_PCT_BY_REPORT: pd.DataFrame(),   #计算得到利润表报告期同比数据
                     PROFIT_PCT_BY_QUARTER: pd.DataFrame(),  #计算得到利润表单季度同比数据
+                    CROSS_REPORT: pd.DataFrame(),
                     }
 
 # const used to generate quarter and year columns for chart ploting
