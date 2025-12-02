@@ -31,7 +31,8 @@ CROSS_REPORT = '综合分析'
 # 定义用来存储报告的变量 key-报表名字，value-报表数据pd.Dataframe。
 # 报告期数据 reports reports_filtered (使用st.sidebar选项过滤后的数据)，单季度数据 reports_quarter reports_quarter_filtered 
 # reports 使用多线程函数 get_all_reports_concurrently自动生成，这里不需要定义，只需要知道数据格式就行
-reports = {PROFIT_BY_REPORT: pd.DataFrame(),       # 经过格式化的原始数据
+reports = {CROSS_REPORT: pd.DataFrame(),
+           PROFIT_BY_REPORT: pd.DataFrame(),       # 经过格式化的原始数据
            CASH_BY_REPORT: pd.DataFrame(),         # 经过格式化的原始数据
            BALANCE_BY_REPORT: pd.DataFrame(),      # 经过格式化的原始数据
 
@@ -39,10 +40,10 @@ reports = {PROFIT_BY_REPORT: pd.DataFrame(),       # 经过格式化的原始数
            CASH_BY_QUARTER: pd.DataFrame(),        #计算得到的单季度数据
            PROFIT_PCT_BY_REPORT: pd.DataFrame(),   #计算得到利润表报告期同比数据
            PROFIT_PCT_BY_QUARTER: pd.DataFrame(),  #计算得到利润表单季度同比数据
-           CROSS_REPORT: pd.DataFrame(),
            }
 # 经过sidebar选项筛选的报表数据，用于可视化显示
-reports_filtered = {PROFIT_BY_REPORT: pd.DataFrame(),       # 经过格式化的原始数据
+reports_filtered = {CROSS_REPORT: pd.DataFrame(),
+                    PROFIT_BY_REPORT: pd.DataFrame(),       # 经过格式化的原始数据
                     CASH_BY_REPORT: pd.DataFrame(),         # 经过格式化的原始数据
                     BALANCE_BY_REPORT: pd.DataFrame(),      # 经过格式化的原始数据
 
@@ -50,7 +51,6 @@ reports_filtered = {PROFIT_BY_REPORT: pd.DataFrame(),       # 经过格式化的
                     CASH_BY_QUARTER: pd.DataFrame(),        #计算得到的单季度数据
                     PROFIT_PCT_BY_REPORT: pd.DataFrame(),   #计算得到利润表报告期同比数据
                     PROFIT_PCT_BY_QUARTER: pd.DataFrame(),  #计算得到利润表单季度同比数据
-                    CROSS_REPORT: pd.DataFrame(),
                     }
 
 # const used to generate quarter and year columns for chart ploting
