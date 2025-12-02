@@ -140,8 +140,10 @@ def reports_cal(reports_raw: dict, col_maps_dict: dict):
         df['*净利润'] = df['净利润']
     if '归母净利润' in df.columns:
         df['*归母净利润'] = df['归母净利润']
-    # 需判断key_cols是否在df中存在
-    key_cols = [col for col in ['*营业总收入', '*毛利润', '*核心利润', '*净利润', '*归母净利润'] if col in df.columns]
+    if '扣非净利润' in df.columns:
+        df['*扣非净利润'] = df['扣非净利润']
+    # 需判断计算得到的key_cols是否在df中存在，然后把key_cols放到前面
+    key_cols = [col for col in ['*营业总收入', '*毛利润', '*核心利润', '*净利润', '*归母净利润', '*扣非净利润'] if col in df.columns]
     for idx, col in enumerate(key_cols):
         # 第一列为报告期，关键指标依次插入到报告期后面
         idx += 1
@@ -157,7 +159,18 @@ def reports_cal(reports_raw: dict, col_maps_dict: dict):
     ### 计算 现金流-单季度
     df= reports[CASH_BY_REPORT]
     reports[CASH_BY_QUARTER] = get_quarter_report(df, REPORT_DATE)
-    reports[CROSS_REPORT] = pd.concat([reports[PROFIT_BY_REPORT][[REPORT_DATE, '*营业总收入']], reports[BALANCE_BY_REPORT]['固定资产合计']], axis=1)
+
+    # 计算 综合分析 报表
+    profit_cols = [REPORT_DATE, '*营业总收入', '*毛利润', '*核心利润', '*净利润']
+    balance_cols = [REPORT_DATE, '资产总计', '负债合计', '归属于母公司股东权益总计', '股东权益合计']
+    df1 = reports[PROFIT_BY_REPORT][[col for col in profit_cols if col in reports[PROFIT_BY_REPORT].columns]]
+    df2 = reports[BALANCE_BY_REPORT][[col for col in balance_cols if col in reports[BALANCE_BY_REPORT].columns]]
+    reports[CROSS_REPORT] = pd.merge(left=df1, right=df2, how='outer', on=REPORT_DATE)
+    reports[CROSS_REPORT] = reports[CROSS_REPORT].sort_values(by=REPORT_DATE, axis=0, ascending=False).reset_index(drop=True)
+    # pd.DataFrame().sort_values(ascending=True)
+    # st.write( reports[CROSS_REPORT])
+    # st.stop()
+    
     return reports
     
 
@@ -198,7 +211,7 @@ if st_stock_code:
     )
     df_stock_list_filterd = df_stock_list.query(query_filter_expr, engine='python')
     df_stock_list_filterd.reset_index(drop=True, inplace=True)
-    df_stock_list_filterd.index += 1
+    df_stock_list_filterd.index += 1  # index for web-user should start from 1
 
     # show df_stock_list_filterd if not empty else show "no stock found"
     if not df_stock_list_filterd.empty:
@@ -227,15 +240,17 @@ else:
 
 st.subheader(f'📊 {stock_name}({stock_code}) 财务报表分析 - {st_data_source}') # get stock code by stock_selected_row
 
+
 ### ================= 下载三张原始报表，然后格式化报表，生成单季度和同比报表=================================
 with st.spinner("⏳ 正在下载数据，请稍候..."):
     # stock_balance_sheet_by_report = get_balance_sheet_by_report(stock_code, DATA_SOURCE[st_data_source])
     reports_raw = {k: v for k, v in get_all_reports_concurrently(stock_code, DATA_SOURCE[st_data_source]).items()}
+    # 计算报表新列，生成单季度和同比报表，使用cache_data修饰提升运行性能
+    reports = reports_cal(reports_raw, col_maps_dict)
 st.success("✅ 数据下载完成！")
-# 计算报表新列，生成单季度和同比报表，使用cache_data修饰提升运行性能
-reports = reports_cal(reports_raw, col_maps_dict)
 
-### ==================== sidebar筛选选项 ====================================
+
+### ==================================== sidebar筛选选项 =========================================
 # 设置年份过滤
 with st.sidebar:
     st.markdown('---')
@@ -273,7 +288,7 @@ with st.sidebar:
     # 设置图标的高度
     st_chart_height = st.slider('图表高度：', min_value=200, max_value=600, value=300, step=1)
 
-### ====================  对报表进行筛选 ======================================
+### ===================================  对报表进行筛选 ==========================================
 ### 对各报表进行筛选 1. slider年份筛选   2. 隐藏空值筛选   3. col_maps中item列筛选
 start_year, end_year = st_years_filter
 for report_name, df in reports.items():
@@ -293,7 +308,7 @@ for report_name, df in reports.items():
         reports_filtered[report_name] = reports_filtered[report_name][[col for col in col_maps_dict[report_name]['item'] if col in reports_filtered[report_name].columns]]
 
 
-### =============== 数据可视化  ================================
+### ======================================= 数据可视化  ==========================================
 tab1_summary, tab2_charts, tab3_tables = st.tabs(['📋综合分析', '📊图表', '📅表格'], default= '📅表格')
 
 with tab1_summary:
@@ -314,7 +329,7 @@ with tab2_charts:
         ### 使用multiselect 过滤
         cols = df_plot1.select_dtypes(include=['float', 'int']).columns
         # default_cols需要检测要显示的列是否存在，有些数据缺失可能没有计算出这些列（如银行和保险行业）
-        default_cols = [col for col in ['*营业总收入', '*毛利润', '*核心利润', '*净利润', '*归母净利润'] if col in cols]
+        default_cols = [col for col in ['*营业总收入', '*毛利润', '*核心利润', '*净利润', '*归母净利润', '*扣非净利润'] if col in cols]
         st_selected_cols = st.multiselect('选择要显示的列：', options=cols, default=default_cols)
         for col in st_selected_cols:
             fig1 = plot_bar_quarter_go(df_plot1, col, title_suffix='', height=st_chart_height)
