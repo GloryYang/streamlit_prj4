@@ -269,26 +269,19 @@ with st.sidebar:
     # 季度筛选
     st.markdown("<small>选择显示的季度数据：</small>", unsafe_allow_html=True)
     # st_selected_quarters = st.multiselect('', ['Q1', 'Q2', 'Q3', 'Q4'], ['Q1', 'Q2', 'Q3', 'Q4'])
-    # st_selected_quarters = [int(s[1]) for s in st_selected_quarters]
-    
-    st.markdown("""
-    <style>
-    .quarter-grid {
-        display: grid;
-        grid-template-columns: 1fr 1fr;
-        column-gap: 10px;
-        row-gap: 5px;
-    }
-    </style>
-    """, unsafe_allow_html=True)
-
-    st.markdown('<div class="quarter-grid">', unsafe_allow_html=True)
+    # st_selected_quarters = [int(s[1]) for s in 
     st_Q1 = st.checkbox("1", value=True)
     st_Q2 = st.checkbox("2", value=True)
     st_Q3 = st.checkbox("3", value=True)
     st_Q4 = st.checkbox("4", value=True)
-    st.markdown('</div>', unsafe_allow_html=True)
     st_selected_quarters = [q for q, checked in zip([1, 2, 3, 4], [st_Q1, st_Q2, st_Q3, st_Q4]) if checked]
+    s1=st.segmented_control(
+    "季度",
+    options=["1","2","3","4"],
+    selection_type="multiple",
+    default=["1","2","3","4"])
+    st.write(s1)
+    
     if len(st_selected_quarters) ==0:
         st.warning('至少选择一个季度数据')
         st.stop()
