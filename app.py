@@ -10,6 +10,7 @@ import time, os, re
 from common import *
 
 
+
 @st.cache_data(ttl=3600, show_spinner=False)
 def get_stock_list() -> pd.DataFrame:
     df=pd.read_csv(r'stock_list1.csv', header=0)
@@ -121,6 +122,7 @@ def reports_cal(reports_raw: dict, col_maps_dict: dict):
         reports[report_name] = format_report(df, df_col_maps=col_maps_dict[report_name], source=DATA_SOURCE[st_data_source])
 
     ### ==================  计算新的数据列 计算自定义报表df ==================================
+    ### 需要的表在这里先都计算好，后面再统一进行筛选
     ### 利润表 先计算新列。然后计算利润表-单季度df，利润表-报告期同比df， 利润表-单季度同比df'，新列会被新的df继承
     df = reports[PROFIT_BY_REPORT]
     # 2018年以前 研发费用属于管理费用，没有研发费用这一列，数据都是np.nan，需要用0来填充，否则计算出来的也是np.nan
@@ -178,8 +180,8 @@ def reports_cal(reports_raw: dict, col_maps_dict: dict):
 ##########################################################################################
 ###############################  main start here #########################################
 ##########################################################################################
-st.set_page_config(page_title="📈Finicial Report", layout="wide")
-st.title("📈Finiacal Reprot Analysis")
+st.set_page_config(page_title="📈Financial Report", layout="wide")
+st.title("📈Financial Reprot Analysis")
 
 with st.sidebar:
     st_data_source = st.selectbox('select data source:', ['ths', 'east money', 'sina'], 0)
@@ -188,11 +190,12 @@ with st.sidebar:
 
 # =========================== stock list filter ================================================
 # get stock list df and df_col_maps
-df_stock_list = get_stock_list()
-col_maps_dict = get_col_maps_dict()
-df_stock_list['code'] = df_stock_list["code"].astype(str).str.zfill(6)
+with st.spinner('⏳ 正在加载表格...'):
+    df_stock_list = get_stock_list()
+    col_maps_dict = get_col_maps_dict()
+    df_stock_list['code'] = df_stock_list["code"].astype(str).str.zfill(6)
 
-st_stock_code = st.text_input("ℹ️Please input stock code, name or initial (eg: 300416 or 汤臣倍健 or tcbj):")
+st_stock_code = st.text_input("ℹ️Please input stock code, name or initial (eg: 600519 or 贵州茅台 or gzmt):")
 
 # variable declaration under if statement for future use
 df_stock_list_filterd = pd.DataFrame()
@@ -225,7 +228,7 @@ if st_stock_code:
             stock_selected_row = 0
         
         if len(st_stock_selected["selection"]["rows"])>0:
-            # stock_selected format - {"selection":{"rows":[0:1]"columns":[]"cells":[]}}
+            # stock_selected format - {"selection":{"rows":[], "columns":[], "cells":[]}}
             stock_selected_row = st_stock_selected["selection"]["rows"][0]
     else:
         st.error('❌  no stock code found')
@@ -251,6 +254,17 @@ st.success("✅ 数据下载完成！")
 
 
 ### ==================================== sidebar筛选选项 =========================================
+# 初始化st_quaters_filter，定义on_change函数防止季度选择为空，代码放到st.stop后面避免第一次没渲染按钮不高亮
+QUARTERS_OPTION = ['Q1', 'Q2', 'Q3', 'Q4']
+if 'st_quaters_filter' not in st.session_state:
+    st.session_state.st_quaters_filter = QUARTERS_OPTION
+    st.session_state.st_quaters_filter_pre = st.session_state.st_quaters_filter
+def st_quaters_filter_change():
+    # st_quaters_filter返回值是list
+    if len(st.session_state.st_quaters_filter) == 0:
+        st.session_state.st_quaters_filter = st.session_state.st_quaters_filter_pre
+    st.session_state.st_quaters_filter_pre = st.session_state.st_quaters_filter
+
 # 设置年份过滤
 with st.sidebar:
     st.markdown('---')
@@ -267,47 +281,8 @@ with st.sidebar:
         value=(int(max_year)-5, int(max_year))  # 默认选中整个范围
     )
     # 季度筛选
-    st.markdown("<small>选择显示的季度数据：</small>", unsafe_allow_html=True)
-    # st_selected_quarters = st.multiselect('', ['Q1', 'Q2', 'Q3', 'Q4'], ['Q1', 'Q2', 'Q3', 'Q4'])
-    # st_selected_quarters = [int(s[1]) for s in 
-
-    st.markdown("""
-    <style>
-    .quarter-grid {
-        display: grid;
-        grid-template-columns: 1fr 1fr;
-        gap: 6px 12px;
-    }
-    </style>
-    """, unsafe_allow_html=True)
-
-    # 创建 grid 容器
-    quarter_grid = st.container()
-    quarter_grid.markdown('<div class="quarter-grid">', unsafe_allow_html=True)
-
-    # 用空 container 作为 grid 单元格
-    cell1 = quarter_grid.container()
-    cell2 = quarter_grid.container()
-    cell3 = quarter_grid.container()
-    cell4 = quarter_grid.container()
-
-    quarter_grid.markdown('</div>', unsafe_allow_html=True)
-
-    # 现在在 cell 里放 checkbox —— 就能排成两列了
-    with cell1:
-        st_Q1 = st.checkbox("1", value=True)
-    with cell2:
-        st_Q2 = st.checkbox("2", value=True)
-    with cell3:
-        st_Q3 = st.checkbox("3", value=True)
-    with cell4:
-        st_Q4 = st.checkbox("4", value=True)
-
-    st_selected_quarters = [q for q, checked in zip([1, 2, 3, 4], [st_Q1, st_Q2, st_Q3, st_Q4]) if checked]
-    
-    if len(st_selected_quarters) ==0:
-        st.warning('至少选择一个季度数据')
-        st.stop()
+    st_quarters_filter = st.segmented_control('选择显示的季度数据：', options=QUARTERS_OPTION, key='st_quaters_filter', on_change=st_quaters_filter_change, selection_mode='multi')
+    st_quarters_filter = [int(q[1]) for q in st_quarters_filter]  # 从Q1中提取季度数字
     st_Q_latest = st.checkbox('最新季度', value=True)
     st.markdown('---')
 
@@ -324,7 +299,7 @@ for report_name, df in reports.items():
     # 年份筛选
     df = df[df[REPORT_DATE].dt.year.between(start_year, end_year)]
     # 季度筛选
-    df = df[df[REPORT_DATE].dt.quarter.isin(st_selected_quarters)]
+    df = df[df[REPORT_DATE].dt.quarter.isin(st_quarters_filter)]
     if st_Q_latest and df.iloc[0][REPORT_DATE]!=reports[report_name].iloc[0][REPORT_DATE]:
         new_row = reports[report_name].iloc[[0]]
         df = pd.concat([new_row, df], axis=0)
@@ -338,74 +313,98 @@ for report_name, df in reports.items():
 
 
 ### ======================================= 数据可视化  ==========================================
-tab1_summary, tab2_charts, tab3_tables = st.tabs(['📋综合分析', '📊图表', '📅表格'], default= '📅表格')
 
-with tab1_summary:
-    pass
+# 报表可视化category的segmented_control，使用on_change函数监测控件值，为空的话重置为前一个值
+# session_state初始化需要放到这里，否则前面的st.stop会影响第一次运行渲染，st_category默认按钮不会高亮
+CATEGORY_OPTIONS=['📋综合分析', '📊图表', '📅表格']
+if 'st_category' not in st.session_state:
+    st.session_state.st_category = CATEGORY_OPTIONS[1]
+    st.session_state.st_category_pre = st.session_state.st_category
+def st_category_change():
+    # st_category返回值是字符串
+    if st.session_state.st_category == None:
+        st.session_state.st_category = st.session_state.st_category_pre
+    st.session_state.st_category_pre = st.session_state.st_category
 
-### tab2 图标可视化
-with tab2_charts:
-    # 使用 segmented_control 来选择报表
-    st_report_choice = st.segmented_control('选择报表：', options=[PROFIT_BY_REPORT, PROFIT_BY_QUARTER, CASH_BY_REPORT, CASH_BY_QUARTER, BALANCE_BY_REPORT], default=PROFIT_BY_QUARTER)
-    # 图表 利润表-报告期 和 利润表-单季度
-    if st_report_choice==PROFIT_BY_REPORT or st_report_choice==PROFIT_BY_QUARTER:
-        if st_report_choice==PROFIT_BY_REPORT:
-            df_plot1 = reports_filtered[PROFIT_BY_REPORT].copy()
-            df_plot2 = reports_filtered[PROFIT_PCT_BY_REPORT].copy()
-        if st_report_choice==PROFIT_BY_QUARTER:
-            df_plot1 = reports_filtered[PROFIT_BY_QUARTER].copy()
-            df_plot2 = reports_filtered[PROFIT_PCT_BY_QUARTER].copy()
-        ### 使用multiselect 过滤
-        cols = df_plot1.select_dtypes(include=['float', 'int']).columns
-        # default_cols需要检测要显示的列是否存在，有些数据缺失可能没有计算出这些列（如银行和保险行业）
-        default_cols = [col for col in ['*营业总收入', '*毛利润', '*核心利润', '*净利润', '*归母净利润', '*扣非净利润'] if col in cols]
-        st_selected_cols = st.multiselect('选择要显示的列：', options=cols, default=default_cols)
-        for col in st_selected_cols:
-            fig1 = plot_bar_quarter_go(df_plot1, col, title_suffix='', height=st_chart_height)
-            fig2 = plot_bar_quarter_go(df_plot2, col, title_suffix='同比', height=st_chart_height)
-            st.plotly_chart(fig1, width='stretch')  
-            st.plotly_chart(fig2, width='stretch')
+@st.fragment
+def show_report_category():
+    # tab1_summary, tab2_charts, tab3_tables = st.tabs(['📋综合分析', '📊图表', '📅表格'], default= '📅表格')
+    # 使用st.segmented_control 可以进行局部刷新，fragment下的控件更新只更新fragment下的代码，fragment支持子fragment
+    st_category = st.segmented_control('选择显示分类：: ', key='st_category', on_change=st_category_change, options=CATEGORY_OPTIONS)
+    # with tab1_summary:
+    if st_category == CATEGORY_OPTIONS[0]:
+        pass
 
-    # 图表 现金流量表-报告期 和 现金流量表-单季度
-    if st_report_choice==CASH_BY_REPORT or st_report_choice==CASH_BY_QUARTER:
-        df_plot1 = reports_filtered[st_report_choice].copy()
-        cols = df_plot1.select_dtypes(include=['float', 'int']).columns
-        default_cols = [col for col in ['销售商品、提供劳务收到的现金', '购建固定资产、无形资产和其他长期资产支付的现金', '取得子公司及其他营业单位支付的现金净额', 
-                    '经营活动产生的现金流量净额', '投资活动产生的现金流量净额','筹资活动产生的现金流量净额'] if col in cols]
-        st_selected_cols = st.multiselect('请选择要显示的列：', options=cols, default=default_cols)
-        for col in st_selected_cols:
-            fig1 = plot_bar_quarter_go(df_plot1, col, title_suffix='', height=st_chart_height)
-            st.plotly_chart(fig1, width='stretch')
-    # 图表 资产负债表-报告期
-    if st_report_choice==BALANCE_BY_REPORT:
-        df_plot1 = reports_filtered[st_report_choice].copy()
-        cols = df_plot1.select_dtypes(include=['float', 'int']).columns
-        default_cols = [col for col in ['应收票据及应收账款', '应收款项融资', '存货', 
-                    '固定资产合计', '在建工程合计','商誉', '合同负债', '预收款项'] if col in cols]
-        st_selected_cols = st.multiselect('请选择要显示的列：', options=cols, default=default_cols)
-        for col in st_selected_cols:
-            fig1 = plot_bar_quarter_go(df_plot1, col, title_suffix='', height=st_chart_height)
-            st.plotly_chart(fig1, width='stretch')  
+    ### tab2 图标可视化
+    # with tab2_charts:
+    if st_category == CATEGORY_OPTIONS[1]:
+        # 使用 segmented_control 来选择报表
+        st_report_choice = st.segmented_control('选择报表：', options=[PROFIT_BY_REPORT, PROFIT_BY_QUARTER, CASH_BY_REPORT, CASH_BY_QUARTER, BALANCE_BY_REPORT], default=PROFIT_BY_QUARTER)
+        # 图表 利润表-报告期 和 利润表-单季度
+        if st_report_choice==PROFIT_BY_REPORT or st_report_choice==PROFIT_BY_QUARTER:
+            if st_report_choice==PROFIT_BY_REPORT:
+                df_plot1 = reports_filtered[PROFIT_BY_REPORT].copy()
+                df_plot2 = reports_filtered[PROFIT_PCT_BY_REPORT].copy()
+            if st_report_choice==PROFIT_BY_QUARTER:
+                df_plot1 = reports_filtered[PROFIT_BY_QUARTER].copy()
+                df_plot2 = reports_filtered[PROFIT_PCT_BY_QUARTER].copy()
+            ### 使用multiselect 过滤
+            cols = df_plot1.select_dtypes(include=['float', 'int']).columns
+            # default_cols需要检测要显示的列是否存在，有些数据缺失可能没有计算出这些列（如银行和保险行业）
+            default_cols = [col for col in ['*营业总收入', '*毛利润', '*核心利润', '*净利润', '*归母净利润', '*扣非净利润'] if col in cols]
+            st_selected_cols = st.multiselect('选择要显示的列：', options=cols, default=default_cols)
+            for col in st_selected_cols:
+                fig1 = plot_bar_quarter_go(df_plot1, col, title_suffix='', height=st_chart_height)
+                st.plotly_chart(fig1, width='stretch')
+                # 有些col在主df里面有，同比计算后可能没有，需要进行判断再画
+                if col in df_plot2.columns:
+                    fig2 = plot_bar_quarter_go(df_plot2, col, title_suffix='同比', height=st_chart_height)
+                    st.plotly_chart(fig2, width='stretch')
+
+        # 图表 现金流量表-报告期 和 现金流量表-单季度
+        if st_report_choice==CASH_BY_REPORT or st_report_choice==CASH_BY_QUARTER:
+            df_plot1 = reports_filtered[st_report_choice].copy()
+            cols = df_plot1.select_dtypes(include=['float', 'int']).columns
+            default_cols = [col for col in ['销售商品、提供劳务收到的现金', '购建固定资产、无形资产和其他长期资产支付的现金', '取得子公司及其他营业单位支付的现金净额', 
+                        '经营活动产生的现金流量净额', '投资活动产生的现金流量净额','筹资活动产生的现金流量净额'] if col in cols]
+            st_selected_cols = st.multiselect('请选择要显示的列：', options=cols, default=default_cols)
+            for col in st_selected_cols:
+                fig1 = plot_bar_quarter_go(df_plot1, col, title_suffix='', height=st_chart_height)
+                st.plotly_chart(fig1, width='stretch')
+        # 图表 资产负债表-报告期
+        if st_report_choice==BALANCE_BY_REPORT:
+            df_plot1 = reports_filtered[st_report_choice].copy()
+            cols = df_plot1.select_dtypes(include=['float', 'int']).columns
+            default_cols = [col for col in ['应收票据及应收账款', '应收款项融资', '存货', 
+                        '固定资产合计', '在建工程合计','商誉', '合同负债', '预收款项'] if col in cols]
+            st_selected_cols = st.multiselect('请选择要显示的列：', options=cols, default=default_cols)
+            for col in st_selected_cols:
+                fig1 = plot_bar_quarter_go(df_plot1, col, title_suffix='', height=st_chart_height)
+                st.plotly_chart(fig1, width='stretch')  
 
 
-with tab3_tables:
-    for report_name, df in reports_filtered.items():
-        with st.expander(f'{report_name}'):
-            df_filtered = df
-            # 下面进行网页显示处理
-            # 格式化'报告期'列显示格式
-            df_filtered = df_filtered.map(value_to_str)
-            # df转置并设置第一行报告期为列名
-            df_filtered = df_filtered.T
-            df_filtered.columns = df_filtered.iloc[0]
-            df_filtered = df_filtered[1:]
-            # 显示，空值替换为 '-'
-            st.dataframe(df_filtered.map(value_to_str),
-                column_config={
-                "_index": st.column_config.Column(
-                "序号",  # 可以在这里设置索引列的新标题
-                width=120 if '现金流量表' in report_name else 100,  # 调整宽度，例如 "small", "medium", "large"
-                ),
-                # 也可以在这里配置其他数据列...
-                })
+    # with tab3_tables:
+    if st_category == CATEGORY_OPTIONS[2]:
+        for report_name, df in reports_filtered.items():
+            with st.expander(f'{report_name}'):
+                df_filtered = df
+                # 下面进行网页显示处理
+                # 格式化'报告期'列显示格式
+                df_filtered = df_filtered.map(value_to_str)
+                # df转置并设置第一行报告期为列名
+                df_filtered = df_filtered.T
+                df_filtered.columns = df_filtered.iloc[0]
+                df_filtered = df_filtered[1:]
+                # 显示，空值替换为 '-'
+                st.dataframe(df_filtered.map(value_to_str),
+                    column_config={
+                    "_index": st.column_config.Column(
+                    "序号",  # 可以在这里设置索引列的新标题
+                    width=120 if '现金流量表' in report_name else 100,  # 调整宽度，例如 "small", "medium", "large"
+                    ),
+                    # 也可以在这里配置其他数据列...
+                    })
+
+show_report_category()
+
 
