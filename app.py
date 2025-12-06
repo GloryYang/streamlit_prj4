@@ -270,17 +270,40 @@ with st.sidebar:
     st.markdown("<small>选择显示的季度数据：</small>", unsafe_allow_html=True)
     # st_selected_quarters = st.multiselect('', ['Q1', 'Q2', 'Q3', 'Q4'], ['Q1', 'Q2', 'Q3', 'Q4'])
     # st_selected_quarters = [int(s[1]) for s in 
-    st_Q1 = st.checkbox("1", value=True)
-    st_Q2 = st.checkbox("2", value=True)
-    st_Q3 = st.checkbox("3", value=True)
-    st_Q4 = st.checkbox("4", value=True)
+
+    st.markdown("""
+    <style>
+    .quarter-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 6px 12px;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+
+    # 创建 grid 容器
+    quarter_grid = st.container()
+    quarter_grid.markdown('<div class="quarter-grid">', unsafe_allow_html=True)
+
+    # 用空 container 作为 grid 单元格
+    cell1 = quarter_grid.container()
+    cell2 = quarter_grid.container()
+    cell3 = quarter_grid.container()
+    cell4 = quarter_grid.container()
+
+    quarter_grid.markdown('</div>', unsafe_allow_html=True)
+
+    # 现在在 cell 里放 checkbox —— 就能排成两列了
+    with cell1:
+        st_Q1 = st.checkbox("1", value=True)
+    with cell2:
+        st_Q2 = st.checkbox("2", value=True)
+    with cell3:
+        st_Q3 = st.checkbox("3", value=True)
+    with cell4:
+        st_Q4 = st.checkbox("4", value=True)
+
     st_selected_quarters = [q for q, checked in zip([1, 2, 3, 4], [st_Q1, st_Q2, st_Q3, st_Q4]) if checked]
-    s1=st.segmented_control(
-    "季度",
-    options=["1","2","3","4"],
-    selection_type="multiple",
-    default=["1","2","3","4"])
-    st.write(s1)
     
     if len(st_selected_quarters) ==0:
         st.warning('至少选择一个季度数据')
