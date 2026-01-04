@@ -123,11 +123,12 @@ def reports_cal(reports_raw: dict, col_maps_dict: dict):
 
     ### ==================  计算新的数据列 计算自定义报表df ==================================
     ### 需要的表在这里先都计算好，后面再统一进行筛选
-    ### 利润表 先计算新列。然后计算利润表-单季度df，利润表-报告期同比df， 利润表-单季度同比df'，新列会被新的df继承
+    ### 利润表 先计算自定义新列。然后计算 利润表-单季度df，利润表-报告期同比df， 利润表-单季度同比df'，自定义新列会被新的df继承
     df = reports[PROFIT_BY_REPORT]
-    # 2018年以前 研发费用属于管理费用，没有研发费用这一列，数据都是np.nan，需要用0来填充，否则计算出来的也是np.nan
+    # 银行和保险行业的报表项目与传统项目不一样，先判断是否存在列名，再进行计算
     if '营业总收入' in df.columns:
         df['*营业总收入'] = df['营业总收入']
+    # 2018年以前 研发费用属于管理费用，没有研发费用这一列，数据都是np.nan，需要用0来填充，否则计算出来的也是np.nan
     if '研发费用' in df.columns:
         df['研发费用'] = df['研发费用'].fillna(0)
     ### 利润表-报告期 中增加新的列
@@ -150,31 +151,89 @@ def reports_cal(reports_raw: dict, col_maps_dict: dict):
         # 第一列为报告期，关键指标依次插入到报告期后面
         idx += 1
         df.insert(idx, col, df.pop(col))
-    # 计算 利润表-单季度df
+    ### 计算 [利润表-单季度]df
     reports[PROFIT_BY_QUARTER] = get_quarter_report(df, REPORT_DATE)
-    ### 计算 利润表-报告期同比df 和 利润表-单季度同比df，添加报告期列，保存到reports[PROFIT_PCT_BY_REPORT]和reports[PROFIT_PCT_BY_QUARTER]
+    ### 计算 [利润表-报告期同比]df 和 [利润表-单季度同比]df，添加报告期列，保存到reports[PROFIT_PCT_BY_REPORT]和reports[PROFIT_PCT_BY_QUARTER]
     reports[PROFIT_PCT_BY_REPORT] = reports[PROFIT_BY_REPORT].select_dtypes(include=(float, int)).apply(safe_yoy)
     reports[PROFIT_PCT_BY_REPORT] = pd.concat([df[REPORT_DATE], reports[PROFIT_PCT_BY_REPORT] ], axis=1)
     reports[PROFIT_PCT_BY_QUARTER] = reports[PROFIT_BY_QUARTER].select_dtypes(include=(float, int)).apply(safe_yoy)
     reports[PROFIT_PCT_BY_QUARTER] = pd.concat([df[REPORT_DATE], reports[PROFIT_PCT_BY_QUARTER] ], axis=1)
+    ### 计算 [利润表-报告期 和 利润表-单季度 的各种利润率和费用率]。这些指标不可进行同比计算，需要放到同比计算之后
+    for report_name in [PROFIT_BY_REPORT, PROFIT_BY_QUARTER]:
+        df = reports[report_name]
+        if {'*毛利润', '营业总收入'}.issubset(df.columns):
+            df['毛利润率[%]'] = df.eval('`*毛利润`/ `营业总收入` * 100')
+        if {'*核心利润', '营业总收入'}.issubset(df.columns):
+            df['核心利润率[%]'] = df.eval('`*核心利润`/ `营业总收入` * 100')
+        if {'*净利润', '营业总收入'}.issubset(df.columns):
+            df['净利润[%]'] = df.eval('`*净利润`/ `营业总收入` * 100') 
+        if {'销售费用', '营业总收入'}.issubset(df.columns):
+            df['销售费用率[%]'] = df.eval('`销售费用`/ `营业总收入` * 100')
+        if {'管理费用', '营业总收入'}.issubset(df.columns):
+            df['管理费用率[%]'] = df.eval('`管理费用`/ `营业总收入` * 100') 
+        if {'研发费用', '营业总收入'}.issubset(df.columns):
+            df['研发费用率[%]'] = df.eval('`研发费用`/ `营业总收入` * 100') 
+        if {'财务费用', '营业总收入'}.issubset(df.columns):
+            df['财务费用率[%]'] = df.eval('`财务费用`/ `营业总收入` * 100')
+        if {'营业总收入', '销售费用', '管理费用', '研发费用', '财务费用'}.issubset(df.columns):
+            df['四费费率[%]'] = df.eval("(`销售费用` + `管理费用` + `研发费用` + `财务费用`)/`营业总收入`*100")
+        elif {'营业总收入', '销售费用', '管理费用', '财务费用'}.issubset(df.columns):
+            df['三费费率[%]'] = df.eval("(`销售费用` + `管理费用` + `财务费用`)/`营业总收入`*100")
 
-    ### 计算 现金流-单季度
+    ### 计算 [现金流-单季度]
     df= reports[CASH_BY_REPORT]
     reports[CASH_BY_QUARTER] = get_quarter_report(df, REPORT_DATE)
 
-    # 计算 综合分析 报表
+    ### 计算 [综合分析] 报表。先从各原始报表中取需要的数据列，再merg和sort
     profit_cols = [REPORT_DATE, '*营业总收入', '*毛利润', '*核心利润', '*净利润']
-    balance_cols = [REPORT_DATE, '资产总计', '负债合计', '归属于母公司股东权益总计', '股东权益合计']
+    balance_cols = [REPORT_DATE, '资产总计', '负债合计', '归属于母公司股东权益总计', '股东权益合计', 
+                    '应收票据及应收账款', '应收款项融资', '存货', '固定资产合计', '商誉',
+                    '应付票据及应付账款', '预收款项', '合同负债', '短期借款','长期借款', '应付债券']
+    cash_cols = [REPORT_DATE, '期末现金及现金等价物余额', '销售商品、提供劳务收到的现金', '经营活动产生的现金流量净额',
+                 '投资活动产生的现金流量净额', '筹资活动产生的现金流量净额']
     df1 = reports[PROFIT_BY_REPORT][[col for col in profit_cols if col in reports[PROFIT_BY_REPORT].columns]]
     df2 = reports[BALANCE_BY_REPORT][[col for col in balance_cols if col in reports[BALANCE_BY_REPORT].columns]]
+    df3 = reports[CASH_BY_REPORT][[col for col in cash_cols if col in reports[CASH_BY_REPORT].columns]]
     reports[CROSS_REPORT] = pd.merge(left=df1, right=df2, how='outer', on=REPORT_DATE)
-    reports[CROSS_REPORT] = reports[CROSS_REPORT].sort_values(by=REPORT_DATE, axis=0, ascending=False).reset_index(drop=True)
-    # pd.DataFrame().sort_values(ascending=True)
+    df = reports[CROSS_REPORT]
+    df = pd.merge(left=df, right=df3, how='outer', on=REPORT_DATE)
+    df = df.sort_values(by=REPORT_DATE, axis=0, ascending=False).reset_index(drop=True)
+    # 应收应付账款比[%]
+    if {'应收票据及应收账款', '应收款项融资', '应付票据及应付账款'}.issubset(df.columns):
+        df['应收应付账款比[%]'] = df.eval("(`应收票据及应收账款` + `应收款项融资` - `应付票据及应付账款`)/(`应收票据及应收账款` + `应收款项融资`) *100")
+    elif {'应收票据及应收账款', '应付票据及应付账款'}.issubset(df.columns):
+        df['应收应付账款比[%]'] = df.eval("(`应收票据及应收账款`  - `应付票据及应付账款`)/`应收票据及应收账款` *100")
+    # 有息负债
+    df['有息负债'] = 0
+    for item in [col for col in ['短期借款','长期借款', '应付债券'] if col in df.columns]:
+        df[item] = df[item].fillna(0)  # 避免na计算后产生na
+        if item in df.columns:
+            df['有息负债'] = df['有息负债'] + df[item]
+    # 有息负债率[%]
+    if {'有息负债', '期末现金及现金等价物余额'}.issubset(df.columns):
+        df['有息负债率[%]'] = df['有息负债']/df['期末现金及现金等价物余额'] * 100
+    # 应收总额营收比
+    if {'*营业总收入', '应收票据及应收账款', '应收款项融资'}.issubset(df.columns):
+        df['应收总额营收比[%]'] = (df['应收票据及应收账款'] + df['应收款项融资']) / df['*营业总收入'] * 100
+    elif {'*营业总收入', '应收票据及应收账款'}.issubset(df.columns):
+        df['应收总额营收比[%]'] = (df['应收票据及应收账款']) / df['*营业总收入'] * 100
+    # 资产负债率[%]
+    if {'负债合计', '资产总计'}.issubset(df.columns):
+        df['资产负债率[%]'] = df['负债合计']/df['资产总计'] * 100
+    # 固定资产总资产比[%]
+    if {'固定资产合计', '资产总计'}.issubset(df.columns):
+        df['固定资产总资产比[%]'] = df['固定资产合计']/df['资产总计'] * 100
+    # 自定义列排序
+    cal_cols = [col for col in ['应收应付账款比[%]', '有息负债', '有息负债率[%]', '应收总额营收比[%]', 
+                '资产负债率[%]', '固定资产总资产比[%]'] if col in df.columns]
+    for idx, col in enumerate(cal_cols):
+        # 第一列为报告期，关键指标依次插入到报告期后面
+        idx += 1
+        df.insert(idx, col, df.pop(col))
+    reports[CROSS_REPORT] = df  # merge函数产生新的dataframe，需要把df再赋值回去
     # st.write( reports[CROSS_REPORT])
     # st.stop()
-    
     return reports
-    
 
 
 ##########################################################################################
@@ -306,7 +365,7 @@ for report_name, df in reports.items():
     reports_filtered[report_name] = df  
     if st_na_invisible:
         reports_filtered[report_name] = reports_filtered[report_name].dropna(how='all', axis=1)
-    # 只有下面7张表需要进行col_maps筛选，综合分析等列都是自定义的，不需要筛选
+    # 只有下面7张表需要进行col_maps筛选和排序，综合分析等列都是自定义的，不需要筛选
     if st_show_col_maps_only and report_name in [PROFIT_BY_REPORT, CASH_BY_REPORT, BALANCE_BY_REPORT, 
                                 PROFIT_BY_QUARTER, CASH_BY_QUARTER, PROFIT_PCT_BY_REPORT, PROFIT_PCT_BY_QUARTER]:
         reports_filtered[report_name] = reports_filtered[report_name][[col for col in col_maps_dict[report_name]['item'] if col in reports_filtered[report_name].columns]]
@@ -338,7 +397,7 @@ def show_report_category():
     if st_category == CATEGORY_OPTIONS[0]:
         pass
 
-    ### tab2 图标可视化
+    ### tab2 图表可视化
     # with tab2_charts:
     if st_category == CATEGORY_OPTIONS[1]:
         # 使用 segmented_control 来选择报表
@@ -358,12 +417,13 @@ def show_report_category():
             ### 避坑：实现multiselect defualt option记忆功能。本控件在if条件下，if在true和false切换后，控件会重新创建，
             # 所以使用key参数的session_state没有记忆功能，重新创建会重新初始化。可以在此处创建一个命名与本控件无关的session变量来保存和调用记忆。
             st_selected_cols = st.multiselect('选择要显示的列：', options=cols, default=default_cols)
+            title_suffix = st_report_choice[st_report_choice.index('-')+1::]
             for col in st_selected_cols:
-                fig1 = plot_bar_quarter_go(df_plot1, col, title_suffix='', height=st_chart_height)
+                fig1 = plot_bar_quarter_go(df_plot1, col, title_suffix=title_suffix, height=st_chart_height)
                 st.plotly_chart(fig1, width='stretch')
                 # 有些col在主df里面有，同比计算后可能没有，需要进行判断再画
                 if col in df_plot2.columns:
-                    fig2 = plot_bar_quarter_go(df_plot2, col, title_suffix='同比', height=st_chart_height)
+                    fig2 = plot_bar_quarter_go(df_plot2, col, title_suffix=title_suffix + '同比', height=st_chart_height)
                     st.plotly_chart(fig2, width='stretch')
 
         # 图表 现金流量表-报告期 和 现金流量表-单季度
@@ -404,7 +464,7 @@ def show_report_category():
                 st.dataframe(df_filtered.map(value_to_str),
                     column_config={
                     "_index": st.column_config.Column(
-                    "序号",  # 可以在这里设置索引列的新标题
+                    "报告期",  # 可以在这里设置索引列的新标题
                     width=120 if '现金流量表' in report_name else 100,  # 调整宽度，例如 "small", "medium", "large"
                     ),
                     # 也可以在这里配置其他数据列...
