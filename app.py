@@ -185,7 +185,7 @@ def reports_cal(reports_raw: dict, col_maps_dict: dict):
     reports[CASH_BY_QUARTER] = get_quarter_report(df, REPORT_DATE)
 
     ### 计算 [综合分析] 报表。先从各原始报表中取需要的数据列，再merg和sort
-    profit_cols = [REPORT_DATE, '*营业总收入', '*毛利润', '*核心利润', '*净利润']
+    profit_cols = [REPORT_DATE, '*营业总收入', '*毛利润', '*核心利润', '*净利润', '营业成本']
     balance_cols = [REPORT_DATE, '资产总计', '负债合计', '归属于母公司股东权益总计', '股东权益合计', 
                     '应收票据及应收账款', '应收款项融资', '存货', '固定资产合计', '商誉',
                     '应付票据及应付账款', '预收款项', '合同负债', '短期借款','长期借款', '应付债券']
@@ -198,25 +198,34 @@ def reports_cal(reports_raw: dict, col_maps_dict: dict):
     df = reports[CROSS_REPORT]
     df = pd.merge(left=df, right=df3, how='outer', on=REPORT_DATE)
     df = df.sort_values(by=REPORT_DATE, axis=0, ascending=False).reset_index(drop=True)
-    # 应收应付账款比[%]
+    # 应收应付总额比[%]
     if {'应收票据及应收账款', '应收款项融资', '应付票据及应付账款'}.issubset(df.columns):
-        df['应收应付账款比[%]'] = df.eval("(`应收票据及应收账款` + `应收款项融资` - `应付票据及应付账款`)/(`应收票据及应收账款` + `应收款项融资`) *100")
+        df['应收应付总额比[%]'] = df.eval("(`应收票据及应收账款` + `应收款项融资` - `应付票据及应付账款`)/(`应收票据及应收账款` + `应收款项融资`) *100")
     elif {'应收票据及应收账款', '应付票据及应付账款'}.issubset(df.columns):
-        df['应收应付账款比[%]'] = df.eval("(`应收票据及应收账款`  - `应付票据及应付账款`)/`应收票据及应收账款` *100")
+        df['应收应付总额比[%]'] = df.eval("(`应收票据及应收账款`  - `应付票据及应付账款`)/`应收票据及应收账款` *100")
+    # 应收总额营收比[%]'
+    if {'*营业总收入', '应收票据及应收账款', '应收款项融资'}.issubset(df.columns):
+        df['应收总额营收比[%]'] = (df['应收票据及应收账款'] + df['应收款项融资']) / df['*营业总收入'] * 100
+    elif {'*营业总收入', '应收票据及应收账款'}.issubset(df.columns):
+        df['应收总额营收比[%]'] = (df['应收票据及应收账款']) / df['*营业总收入'] * 100
+    # 存货营业成本比[%]
+    if {'存货', '营业成本'}.issubset(df.columns):
+        df['存货营业成本比[%]'] = df['存货']/df['营业成本'] * 100
+    # 预收总额营收比[%]
+    if '*营业总收入' in df.columns:
+        df['预收总额营收比[%]'] = 0
+        for item in [col for col in ['预收款项', '合同负债'] if col in df.columns]:
+            df[item] = df[item].fillna(0)  # 避免na计算后产生na
+            df['预收总额营收比[%]'] = df['预收总额营收比[%]'] + df[item]/df['*营业总收入']*100
     # 有息负债
     df['有息负债'] = 0
     for item in [col for col in ['短期借款','长期借款', '应付债券'] if col in df.columns]:
         df[item] = df[item].fillna(0)  # 避免na计算后产生na
         if item in df.columns:
             df['有息负债'] = df['有息负债'] + df[item]
-    # 有息负债率[%]
+    # 有息负债现金等价物比[%]
     if {'有息负债', '期末现金及现金等价物余额'}.issubset(df.columns):
-        df['有息负债率[%]'] = df['有息负债']/df['期末现金及现金等价物余额'] * 100
-    # 应收总额营收比
-    if {'*营业总收入', '应收票据及应收账款', '应收款项融资'}.issubset(df.columns):
-        df['应收总额营收比[%]'] = (df['应收票据及应收账款'] + df['应收款项融资']) / df['*营业总收入'] * 100
-    elif {'*营业总收入', '应收票据及应收账款'}.issubset(df.columns):
-        df['应收总额营收比[%]'] = (df['应收票据及应收账款']) / df['*营业总收入'] * 100
+        df['有息负债现金等价物比[%]'] = df['有息负债']/df['期末现金及现金等价物余额'] * 100
     # 资产负债率[%]
     if {'负债合计', '资产总计'}.issubset(df.columns):
         df['资产负债率[%]'] = df['负债合计']/df['资产总计'] * 100
@@ -224,8 +233,8 @@ def reports_cal(reports_raw: dict, col_maps_dict: dict):
     if {'固定资产合计', '资产总计'}.issubset(df.columns):
         df['固定资产总资产比[%]'] = df['固定资产合计']/df['资产总计'] * 100
     # 自定义列排序
-    cal_cols = [col for col in ['应收应付账款比[%]', '有息负债', '有息负债率[%]', '应收总额营收比[%]', 
-                '资产负债率[%]', '固定资产总资产比[%]'] if col in df.columns]
+    cal_cols = [col for col in ['应收应付总额比[%]', '应收总额营收比[%]', '存货营业成本比[%]', '预收总额营收比[%]',  
+                '有息负债', '有息负债现金等价物比[%]', '资产负债率[%]', '固定资产总资产比[%]'] if col in df.columns]
     for idx, col in enumerate(cal_cols):
         # 第一列为报告期，关键指标依次插入到报告期后面
         idx += 1
@@ -385,7 +394,6 @@ def st_category_change():
         st.session_state.st_category = st.session_state.st_category_pre
     st.session_state.st_category_pre = st.session_state.st_category
 
-
 # st.write(time.strftime('%H:%M:%S'))
 @st.fragment
 def show_report_category():
@@ -458,10 +466,11 @@ def show_report_category():
                 df_filtered = df_filtered.map(value_to_str)
                 # df转置并设置第一行报告期为列名
                 df_filtered = df_filtered.T
+                # 报告期设置成列名columns
                 df_filtered.columns = df_filtered.iloc[0]
                 df_filtered = df_filtered[1:]
                 # 显示，空值替换为 '-'
-                st.dataframe(df_filtered.map(value_to_str),
+                st_table_selected_rows = st.dataframe(df_filtered.map(value_to_str), on_select='rerun',
                     column_config={
                     "_index": st.column_config.Column(
                     "报告期",  # 可以在这里设置索引列的新标题
@@ -469,6 +478,15 @@ def show_report_category():
                     ),
                     # 也可以在这里配置其他数据列...
                     })
+                # 画出表格中选中的数据行，行row对应df的列row+1
+                if len(st_table_selected_rows['selection']['rows']) > 0:
+                    for row in st_table_selected_rows['selection']['rows']:
+                        if df.iloc[:,row+1].dtype not in ['float', 'int']:
+                            st.markdown(f'"{df.columns[row+1]}" 不是数值类型')
+                        else:
+                            # 显示的table是df的转置，df的列对应table的行row+1
+                            fig1 = plot_bar_quarter_go(df, df.columns[row+1], title_suffix=f'[{report_name}]', height=st_chart_height)
+                            st.plotly_chart(fig1, width='stretch')
 
 show_report_category()
 
