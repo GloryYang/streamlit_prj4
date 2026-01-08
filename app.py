@@ -1,493 +1,503 @@
-
-import streamlit as st
-import akshare as ak
+import re
 import pandas as pd
 import numpy as np
 import plotly.express as px
-from concurrent.futures import ThreadPoolExecutor, as_completed
-import time, os, re
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+import matplotlib.pyplot as plt
+from matplotlib.ticker import FuncFormatter
+import streamlit as st
 
-from common import *
+plt.rcParams['font.sans-serif'] = ['SimHei']
+plt.rcParams['axes.unicode_minus'] = False
+
+# =======================   variable declaration  ======================================
+# ======================================================================================
+# data source used by akshare - 'shown on web': 'called by function'
+# 代码中所有source都是按照这个定义的，web上显示的可以改动，代码调用的是固定的不要改动
+DATA_SOURCE = {'ths': 'ths', 'east money': 'em', 'sina': 'sina'}
+CROSS_REPORT = '综合分析'
+PROFIT_BY_REPORT = '利润表-报告期'
+CASH_BY_REPORT = '现金流量表-报告期'
+BALANCE_BY_REPORT = '资产负债表-报告期'
+
+PROFIT_BY_QUARTER = '利润表-单季度'
+CASH_BY_QUARTER = '现金流量表-单季度'
+
+PROFIT_PCT_BY_REPORT = '利润表-报告期同比'
+PROFIT_PCT_BY_QUARTER = '利润表-单季度同比'
+CASH_PCT_BY_REPORT = '现金流量表-报告期同比'
+CASH_PCT_BY_QUARTER = '现金流量表-单季度同比'
+BALANCE_PCT_BY_REPORT = '资产负债表-报告期同比'
 
 
+# PROFIT = '利润表'
+# CASH = '现金流量表'
+# BALANCE = '资产负债表'
+# 定义用来存储报告的变量 key-报表名字，value-报表数据pd.Dataframe。
+# 报告期数据 reports reports_filtered (使用st.sidebar选项过滤后的数据)，单季度数据 reports_quarter reports_quarter_filtered 
+# reports 使用多线程函数 get_all_reports_concurrently自动生成，这里不需要定义，只需要知道数据格式就行
+reports = {CROSS_REPORT: pd.DataFrame(),
+           PROFIT_BY_REPORT: pd.DataFrame(),       # 经过格式化的原始数据
+           CASH_BY_REPORT: pd.DataFrame(),         # 经过格式化的原始数据
+           BALANCE_BY_REPORT: pd.DataFrame(),      # 经过格式化的原始数据
 
-@st.cache_data(ttl=3600, show_spinner=False)
-def get_stock_list() -> pd.DataFrame:
-    df=pd.read_csv(r'stock_list1.csv', header=0)
+           PROFIT_BY_QUARTER: pd.DataFrame(),      #计算得到的单季度数据
+           CASH_BY_QUARTER: pd.DataFrame(),        #计算得到的单季度数据
+
+           PROFIT_PCT_BY_REPORT: pd.DataFrame(),   #计算得到利润表报告期同比数据
+           PROFIT_PCT_BY_QUARTER: pd.DataFrame(),  #计算得到利润表单季度同比数据
+           CASH_PCT_BY_REPORT: pd.DataFrame(),     #计算得到现金流量表报告期同比数据
+           CASH_PCT_BY_QUARTER: pd.DataFrame(),    #计算得到现金流量表单季度同比数据
+           BALANCE_PCT_BY_REPORT: pd.DataFrame(),  #计算得到资产负债表报告期同比数据
+           }
+# 经过sidebar选项筛选的报表数据，用于可视化显示
+reports_filtered = {CROSS_REPORT: pd.DataFrame(),
+                    PROFIT_BY_REPORT: pd.DataFrame(),       # 经过格式化的原始数据
+                    CASH_BY_REPORT: pd.DataFrame(),         # 经过格式化的原始数据
+                    BALANCE_BY_REPORT: pd.DataFrame(),      # 经过格式化的原始数据
+
+                    PROFIT_BY_QUARTER: pd.DataFrame(),      #计算得到的单季度数据
+                    CASH_BY_QUARTER: pd.DataFrame(),        #计算得到的单季度数据
+
+                    PROFIT_PCT_BY_REPORT: pd.DataFrame(),   #计算得到利润表报告期同比数据
+                    PROFIT_PCT_BY_QUARTER: pd.DataFrame(),  #计算得到利润表单季度同比数据
+                    CASH_PCT_BY_REPORT: pd.DataFrame(),     #计算得到现金流量表报告期同比数据
+                    CASH_PCT_BY_QUARTER: pd.DataFrame(),    #计算得到现金流量表单季度同比数据
+                    BALANCE_PCT_BY_REPORT: pd.DataFrame(),  #计算得到资产负债表报告期同比数据
+                    }
+
+# const used to generate quarter and year columns for chart ploting
+YEAR = '年份'
+QUARTER = '季度'
+REPORT_DATE = '报告期'
+# ======================================================================================
+# ======================================================================================
+
+# all st element varaible with return value defined with prefix st_ in this code
+# add 'SH' or 'SZ' as code prefix for east money data source
+# 用于em的akshare调用，ths和sina不需要
+def add_prefix_to_code(code: str) -> str:
+    code = code.strip()
+    if code.startswith('6'):
+        code = 'SH' + code
+    if code.startswith(('0', '3')):
+        code = 'SZ' + code
+    return code
+# try:
+#             res = float(value)
+#         except:
+#             res = 'xxxx'
+#         finally:
+#             return res
+# 带亿等数字文本转纯数字 
+# 用于将ths的原始数据转成纯数字
+def ths_str_to_num(value: str|float|int) -> float:
+    match = re.match(r'^([-+]?\d*\.?\d*)(万亿|亿|千万|百万|万|千)?$', str(value).strip())
+    if not match:  # 报告期无法匹配到，直接返回
+        return value
+    if match.group(2) is None:  # 只有1个捕获组的说明没有汉字单位，转成float
+        # 避坑，可能会匹配到''空字符，使用float会出错，把空字符的情况要排除
+        # pattern为了匹配 .5  2 这些数字，导致可能会匹配到空字符
+        if str(value).strip() == '':
+            return value
+        else:
+            return float(value)
+    num = float(match.group(1))
+    unit = match.group(2)
+    unit_map = {'万亿':1000000000000, '亿': 100000000, '千万': 10000000, '百万': 1000000, '万': 10000, '千': 1000}
+    return num * unit_map[unit]
+
+# 用于st web显示，把df所有值变成string，便于显示
+def value_to_str(value: float|int|str) -> str:
+    # np.nan使用'-'显示, np.na属于float，需要先处理。np.na和任何float比较都返回False
+    if pd.isna(value):
+        return '-'
+    # 处理数字类型
+    if isinstance(value, (int, float)):
+        if abs(value)>1e12:
+            return f'{value/1e12:.2f}万亿'
+        if abs(value)>1e8:
+            return f'{value/1e8:.2f}亿'
+        # elif abs(value)>1e6:
+        #     return f'{value/1e6:.2f}百万'
+        elif abs(value)>10000:
+            return f'{value/10000:.1f}万'
+        else:
+            return f'{value: .2f}'
+    # string, directly return
+    if isinstance(value, (str)):
+        return value
+    # 格式化日期类型的报告期列
+    if isinstance(value,  pd.Timestamp):
+        value: pd.Timestamp
+        return value.strftime('%Y-%m-%d')
+    
+    # 其余类型，使用str函数转换
+    return str(value)
+
+# col_maps df.columns - ths, em, sina, item
+# 按照col_maps重命名列名，列进行排序，'报告期'列转成pd.to_datetime。
+# 把数字都转成float，方便后续的相关计算。np.na 保持不变，np.na实际可能是没有值，也可能是代表0。
+# 保持np.na不变会导致计算单季度数据时出现问题，np.na参与计算时结果变成np.na，可能与实际不符，不过影响很小，可以先不用管
+def format_report(df: pd.DataFrame, df_col_maps: pd.DataFrame, source: str='em'):    
+    #根据source值赋值col_maps, key为source列，value为item列
+    col_maps = df_col_maps.set_index(source)['item'].to_dict()
+    # col_maps = dict(zip(df_col_maps[source], df_col_maps['item']))
+    ### 按col_maps,重命名报表的列名，形成统一的报表列名
+    df = df.rename(columns={k:v for k, v in col_maps.items() if k !=None and k in df.columns})
+    # 只取col_maps中存在的列(用col_maps.values()内容排序)，其余列可加上或过滤掉
+    col_orders = [c for c in col_maps.values() if c in df.columns] + [c for c in df.columns if c not in col_maps.values()]
+    df = df[col_orders]
+    ### '报告期'列格式化成datetime，后面不能加.dt.strftime('%Y-%m-%d')，否则会变成str类型，不能再调用dt函数
+    df[REPORT_DATE] = pd.to_datetime(df[REPORT_DATE], errors='coerce')
+
+    ### em数据转换，remove east money YOY lines,
+    if(source=='em'):
+        df = df[[col for col in df.columns if not col.endswith('YOY')]]
+        # format number to float
+        df = df.map(lambda v: float(v) if isinstance(v, (float, int)) else v)
+    ### ths数据处理，convet ths data to number
+    if(source=='ths'):
+        # ths 原始数据空值为False，把False用np.nan替代。replace和mask都可以实现
+        # df = df.replace(False, np.nan)
+        df = df.mask(df==False, np.nan)
+        # ths 原始数据包含亿和万等中文字符，需要用函数ths_str_to_num转成纯数字
+        # ths利润表 资产减值损失，信用减值损 的取值与em和sina是反的，用的话需要取反，这里暂时没处理
+        df = df.map(ths_str_to_num)
+    ### sina数据处理
+    if(source=='sina'):
+        # format number to float
+        df = df.map(lambda v: float(v) if isinstance(v, (float, int)) else v)
+
+    # df = df.replace(np.nan, 0) # 把np.na赋值成0，仅用于对比测试
+    # df = df.map(value_to_str)   # 仅用于显示测试
     return df
-@st.cache_data(ttl=3600, show_spinner=False)
-# col_maps_dict {report_name: df in sheet_name['ths', 'em', 'sina', 'item', 'item_group']}
-def get_col_maps_dict() -> dict[str, pd.DataFrame]:
-    sheet_map = {PROFIT_BY_REPORT: 'profit',
-                 BALANCE_BY_REPORT: 'balance',
-                 CASH_BY_REPORT: 'cash',
-                 PROFIT_BY_QUARTER: 'profit',
-                 CASH_BY_QUARTER: 'cash',
-                 PROFIT_PCT_BY_REPORT: 'profit',
-                 PROFIT_PCT_BY_QUARTER: 'profit'
-                 }
-    # sheets_df is a dict. {sheet_name: df in each sheet}
-    sheets_df = pd.read_excel(r'col_maps.xlsx', sheet_name=list(sheet_map.values()), header=0)
-    col_maps_dict = {k: sheets_df[v] for k, v in sheet_map.items()}
-    return col_maps_dict
 
-# 资产负债表 - 报告期
-@st.cache_data(ttl=3600, show_spinner=False)
-def get_balance_sheet_by_report(code: str, source: str = 'ths') -> pd.DataFrame:
-    if source == 'ths':
-        return ak.stock_financial_debt_ths(symbol=code, indicator="按报告期")
-    elif source == 'em':
-        return ak.stock_balance_sheet_by_report_em(symbol=add_prefix_to_code(code))
-    elif source == 'sina':
-        return ak.stock_financial_report_sina(stock=code, symbol="资产负债表")
-    else:
-        return pd.DataFrame()
-# 利润表 - 报告期和季度, sina 没有提供按季度的报表
-@st.cache_data(ttl=3600, show_spinner=False)
-def get_profit_sheet_by_report(code: str, source: str = 'ths') -> pd.DataFrame:
-    if source == 'ths':
-        return ak.stock_financial_benefit_ths(symbol=code, indicator="按报告期")
-    elif source == 'em':
-        return ak.stock_profit_sheet_by_report_em(symbol=add_prefix_to_code(code))
-    elif source == 'sina':
-        return ak.stock_financial_report_sina(stock=code, symbol="利润表")
-    else:
-        return pd.DataFrame()
-@st.cache_data(ttl=3600, show_spinner=False)
-def get_profit_sheet_by_quarterly(code: str, source: str = 'ths') -> pd.DataFrame:
-    if source == 'ths':
-        return ak.stock_financial_benefit_ths(symbol=code, indicator="按单季度")
-    elif source == 'em':
-        return ak.stock_profit_sheet_by_quarterly_em(symbol=add_prefix_to_code(code))
-    else:
-        return pd.DataFrame()
-# 现金流量表 - 报告期和季度, sina 没有提供按季度的报表
-@st.cache_data(ttl=3600, show_spinner=False)
-def get_cash_sheet_by_report(code: str, source: str = 'ths') -> pd.DataFrame:
-    if source == 'ths':
-        return ak.stock_financial_cash_ths(symbol=code, indicator="按报告期")
-    elif source == 'em':
-        return ak.stock_cash_flow_sheet_by_report_em(symbol=add_prefix_to_code(code))
-    elif source == 'sina':
-        return ak.stock_financial_report_sina(stock=code, symbol="现金流量表")
-    else:
-        return pd.DataFrame()
-@st.cache_data(ttl=3600, show_spinner=False)
-def get_cash_sheet_by_quarterly(code: str, source: str = 'ths') -> pd.DataFrame:
-    if source == 'ths':
-        return ak.stock_financial_cash_ths(symbol=code, indicator="按单季度")
-    elif source == 'em':
-        return ak.stock_cash_flow_sheet_by_quarterly_em(symbol=add_prefix_to_code(code))
-    else:
-        return pd.DataFrame()
+# return quarter report. df need to format as number, report_date_col_name need to format as pd.to_datetime
+# 由于sina没有单季度报告的数据供抓取，这里都自行进行计算
+# 注意：某些数据为na的话，计算结果也会na，有些单季度计算出来的数据可能会不准
+def get_quarter_report(df: pd.DataFrame, report_date_col_name: str) -> pd.DataFrame:
+    df_number = df.select_dtypes(include=['float', 'int']).copy()
+    # em, ths, sina的时间都是降序，所以用 diff(-1)，axis=0按行处理。所有行都减后面一行的数据。如果原始数据顺序改变，代码要修改
+    df_q = df_number.diff(-1, axis=0) 
+    # 第一季度数据不需要向下减，mask_Q1筛选出第一季度的数据，把数据还原回来
+    mask_Q1 = df[report_date_col_name].dt.month == 3
+    df_q[mask_Q1] = df_number[mask_Q1]   # 得到Q1行mask，恢复Q1行的数据 
     
-# thread function to get report
-@st.cache_data(ttl=3600, show_spinner=False)
-def get_all_reports_concurrently(code: str, source: str = 'ths') -> dict[str, pd.DataFrame]:
-    # five reports as 
-    tasks = [(PROFIT_BY_REPORT, get_profit_sheet_by_report, (code, source)),
-             (CASH_BY_REPORT,get_cash_sheet_by_report, (code, source)),
-             (BALANCE_BY_REPORT, get_balance_sheet_by_report, (code, source))]
-            # 单季度数据后面自行计算，不从网上抓取了
-            #  (PROFIT_BY_QUARTER, get_profit_sheet_by_quarterly, (code, source)),
-            #  (CASH_BY_QUARTER, get_cash_sheet_by_quarterly, (code, source))
-    results= {}
-    futures_to_tasks = {}
-    with ThreadPoolExecutor(max_workers=len(tasks)) as executor:
-            for name, func, args in tasks:
-                futures_to_tasks[executor.submit(func, *args)] = (name,func.__name__, *args)
-            # futures_to_tasks = {executor.submit(func, *args): name for name, func, args in tasks}
+    df_q = pd.concat([df[report_date_col_name], df_q], axis=1)  # 把报告期列加到最前面
+    return df_q
 
-    for future in as_completed(futures_to_tasks.keys()):
-        report_name, func_name, code, source = futures_to_tasks[future]
-        try:
-            # st.write(report_name, func_name, code, source )
-            results[report_name] = future.result()
-        except Exception as e:
-            # 捕获异常，返回空 DataFrame
-            st.error(f"❌ {report_name}下载失败，参数 （{code}，{source}）。错误代码：{str(e)}")
-            results[report_name] = pd.DataFrame()
+def safe_yoy(series: pd.Series, periods: int =-4) -> pd.Series:
+    """
+    计算同比增长，安全处理零和负数。
     
-    # sort reports in results, 按照代码定义区的定义返回reports
-    results = {report_name: results[report_name] for report_name, _, _ in tasks}
-    return results
-
-# 计算报表新列，生成单季度和同比报表, reports使用的是全局变量
-@st.cache_data(ttl=3600, show_spinner=False)
-def reports_cal(reports_raw: dict, col_maps_dict: dict):
-    reports = reports_raw #{k: v.copy() for k, v in reports_raw.items()}
-    # 先格式化来自(ths, em, sina)的三张原始财务报表，统一格式，方便后续进行操作
-    for report_name in [BALANCE_BY_REPORT, PROFIT_BY_REPORT, CASH_BY_REPORT]:
-        df = reports[report_name]
-        reports[report_name] = format_report(df, df_col_maps=col_maps_dict[report_name], source=DATA_SOURCE[st_data_source])
-
-    ### ==================  计算新的数据列 计算自定义报表df ==================================
-    ### 需要的表在这里先都计算好，后面再统一进行筛选
-    ### 利润表 先计算自定义新列。然后计算 利润表-单季度df，利润表-报告期同比df， 利润表-单季度同比df'，自定义新列会被新的df继承
-    df = reports[PROFIT_BY_REPORT]
-    # 银行和保险行业的报表项目与传统项目不一样，先判断是否存在列名，再进行计算
-    if '营业总收入' in df.columns:
-        df['*营业总收入'] = df['营业总收入']
-    # 2018年以前 研发费用属于管理费用，没有研发费用这一列，数据都是np.nan，需要用0来填充，否则计算出来的也是np.nan
-    if '研发费用' in df.columns:
-        df['研发费用'] = df['研发费用'].fillna(0)
-    ### 利润表-报告期 中增加新的列
-    if {'营业总收入','营业成本'}.issubset(df.columns):
-        df['*毛利润'] = df.eval("`营业总收入` - `营业成本`")
-    if {'营业总收入', '营业税金及附加', '营业成本', '销售费用', '管理费用', '研发费用', '财务费用'}.issubset(df.columns):
-        df['*核心利润'] = df.eval("`营业总收入` - `营业税金及附加` - `营业成本` - `销售费用` - `管理费用` - `研发费用` - `财务费用`")
-    # 2018年以前 研发费用属于管理费用，没有研发费用这一列
-    elif {'营业总收入', '营业税金及附加', '营业成本', '销售费用', '管理费用', '财务费用'}.issubset(df.columns):
-        df['*核心利润'] = df.eval("`营业总收入` - `营业税金及附加` - `营业成本` - `销售费用` - `管理费用` -  - `财务费用`")
-    if '净利润' in df.columns:
-        df['*净利润'] = df['净利润']
-    if '归母净利润' in df.columns:
-        df['*归母净利润'] = df['归母净利润']
-    if '扣非净利润' in df.columns:
-        df['*扣非净利润'] = df['扣非净利润']
-    # 需判断计算得到的key_cols是否在df中存在，然后把key_cols放到前面
-    key_cols = [col for col in ['*营业总收入', '*毛利润', '*核心利润', '*净利润', '*归母净利润', '*扣非净利润'] if col in df.columns]
-    for idx, col in enumerate(key_cols):
-        # 第一列为报告期，关键指标依次插入到报告期后面
-        idx += 1
-        df.insert(idx, col, df.pop(col))
-    ### 计算 [利润表-单季度]df
-    reports[PROFIT_BY_QUARTER] = get_quarter_report(df, REPORT_DATE)
-    ### 计算 [利润表-报告期同比]df 和 [利润表-单季度同比]df，添加报告期列，保存到reports[PROFIT_PCT_BY_REPORT]和reports[PROFIT_PCT_BY_QUARTER]
-    reports[PROFIT_PCT_BY_REPORT] = reports[PROFIT_BY_REPORT].select_dtypes(include=(float, int)).apply(safe_yoy)
-    reports[PROFIT_PCT_BY_REPORT] = pd.concat([df[REPORT_DATE], reports[PROFIT_PCT_BY_REPORT] ], axis=1)
-    reports[PROFIT_PCT_BY_QUARTER] = reports[PROFIT_BY_QUARTER].select_dtypes(include=(float, int)).apply(safe_yoy)
-    reports[PROFIT_PCT_BY_QUARTER] = pd.concat([df[REPORT_DATE], reports[PROFIT_PCT_BY_QUARTER] ], axis=1)
-    ### 计算 [利润表-报告期 和 利润表-单季度 的各种利润率和费用率]。这些指标不可进行同比计算，需要放到同比计算之后
-    for report_name in [PROFIT_BY_REPORT, PROFIT_BY_QUARTER]:
-        df = reports[report_name]
-        if {'*毛利润', '营业总收入'}.issubset(df.columns):
-            df['毛利润率[%]'] = df.eval('`*毛利润`/ `营业总收入` * 100')
-        if {'*核心利润', '营业总收入'}.issubset(df.columns):
-            df['核心利润率[%]'] = df.eval('`*核心利润`/ `营业总收入` * 100')
-        if {'*净利润', '营业总收入'}.issubset(df.columns):
-            df['净利润[%]'] = df.eval('`*净利润`/ `营业总收入` * 100') 
-        if {'销售费用', '营业总收入'}.issubset(df.columns):
-            df['销售费用率[%]'] = df.eval('`销售费用`/ `营业总收入` * 100')
-        if {'管理费用', '营业总收入'}.issubset(df.columns):
-            df['管理费用率[%]'] = df.eval('`管理费用`/ `营业总收入` * 100') 
-        if {'研发费用', '营业总收入'}.issubset(df.columns):
-            df['研发费用率[%]'] = df.eval('`研发费用`/ `营业总收入` * 100') 
-        if {'财务费用', '营业总收入'}.issubset(df.columns):
-            df['财务费用率[%]'] = df.eval('`财务费用`/ `营业总收入` * 100')
-        if {'营业总收入', '销售费用', '管理费用', '研发费用', '财务费用'}.issubset(df.columns):
-            df['四费费率[%]'] = df.eval("(`销售费用` + `管理费用` + `研发费用` + `财务费用`)/`营业总收入`*100")
-        elif {'营业总收入', '销售费用', '管理费用', '财务费用'}.issubset(df.columns):
-            df['三费费率[%]'] = df.eval("(`销售费用` + `管理费用` + `财务费用`)/`营业总收入`*100")
-
-    ### 计算 [现金流-单季度]
-    df= reports[CASH_BY_REPORT]
-    reports[CASH_BY_QUARTER] = get_quarter_report(df, REPORT_DATE)
-
-    ### 计算 [综合分析] 报表。先从各原始报表中取需要的数据列，再merg和sort
-    profit_cols = [REPORT_DATE, '*营业总收入', '*毛利润', '*核心利润', '*净利润', '营业成本']
-    balance_cols = [REPORT_DATE, '资产总计', '负债合计', '归属于母公司股东权益总计', '股东权益合计', 
-                    '应收票据及应收账款', '应收款项融资', '存货', '固定资产合计', '商誉',
-                    '应付票据及应付账款', '预收款项', '合同负债', '短期借款','长期借款', '应付债券']
-    cash_cols = [REPORT_DATE, '期末现金及现金等价物余额', '销售商品、提供劳务收到的现金', '经营活动产生的现金流量净额',
-                 '投资活动产生的现金流量净额', '筹资活动产生的现金流量净额']
-    df1 = reports[PROFIT_BY_REPORT][[col for col in profit_cols if col in reports[PROFIT_BY_REPORT].columns]]
-    df2 = reports[BALANCE_BY_REPORT][[col for col in balance_cols if col in reports[BALANCE_BY_REPORT].columns]]
-    df3 = reports[CASH_BY_REPORT][[col for col in cash_cols if col in reports[CASH_BY_REPORT].columns]]
-    reports[CROSS_REPORT] = pd.merge(left=df1, right=df2, how='outer', on=REPORT_DATE)
-    df = reports[CROSS_REPORT]
-    df = pd.merge(left=df, right=df3, how='outer', on=REPORT_DATE)
-    df = df.sort_values(by=REPORT_DATE, axis=0, ascending=False).reset_index(drop=True)
-    # 应收应付总额比[%]
-    if {'应收票据及应收账款', '应收款项融资', '应付票据及应付账款'}.issubset(df.columns):
-        df['应收应付总额比[%]'] = df.eval("(`应收票据及应收账款` + `应收款项融资` - `应付票据及应付账款`)/(`应收票据及应收账款` + `应收款项融资`) *100")
-    elif {'应收票据及应收账款', '应付票据及应付账款'}.issubset(df.columns):
-        df['应收应付总额比[%]'] = df.eval("(`应收票据及应收账款`  - `应付票据及应付账款`)/`应收票据及应收账款` *100")
-    # 应收总额营收比[%]'
-    if {'*营业总收入', '应收票据及应收账款', '应收款项融资'}.issubset(df.columns):
-        df['应收总额营收比[%]'] = (df['应收票据及应收账款'] + df['应收款项融资']) / df['*营业总收入'] * 100
-    elif {'*营业总收入', '应收票据及应收账款'}.issubset(df.columns):
-        df['应收总额营收比[%]'] = (df['应收票据及应收账款']) / df['*营业总收入'] * 100
-    # 存货营业成本比[%]
-    if {'存货', '营业成本'}.issubset(df.columns):
-        df['存货营业成本比[%]'] = df['存货']/df['营业成本'] * 100
-    # 预收总额营收比[%]
-    if '*营业总收入' in df.columns:
-        df['预收总额营收比[%]'] = 0
-        for item in [col for col in ['预收款项', '合同负债'] if col in df.columns]:
-            df[item] = df[item].fillna(0)  # 避免na计算后产生na
-            df['预收总额营收比[%]'] = df['预收总额营收比[%]'] + df[item]/df['*营业总收入']*100
-    # 有息负债
-    df['有息负债'] = 0
-    for item in [col for col in ['短期借款','长期借款', '应付债券'] if col in df.columns]:
-        df[item] = df[item].fillna(0)  # 避免na计算后产生na
-        if item in df.columns:
-            df['有息负债'] = df['有息负债'] + df[item]
-    # 有息负债现金等价物比[%]
-    if {'有息负债', '期末现金及现金等价物余额'}.issubset(df.columns):
-        df['有息负债现金等价物比[%]'] = df['有息负债']/df['期末现金及现金等价物余额'] * 100
-    # 资产负债率[%]
-    if {'负债合计', '资产总计'}.issubset(df.columns):
-        df['资产负债率[%]'] = df['负债合计']/df['资产总计'] * 100
-    # 固定资产总资产比[%]
-    if {'固定资产合计', '资产总计'}.issubset(df.columns):
-        df['固定资产总资产比[%]'] = df['固定资产合计']/df['资产总计'] * 100
-    # 自定义列排序
-    cal_cols = [col for col in ['应收应付总额比[%]', '应收总额营收比[%]', '存货营业成本比[%]', '预收总额营收比[%]',  
-                '有息负债', '有息负债现金等价物比[%]', '资产负债率[%]', '固定资产总资产比[%]'] if col in df.columns]
-    for idx, col in enumerate(cal_cols):
-        # 第一列为报告期，关键指标依次插入到报告期后面
-        idx += 1
-        df.insert(idx, col, df.pop(col))
-    reports[CROSS_REPORT] = df  # merge函数产生新的dataframe，需要把df再赋值回去
-    # st.write( reports[CROSS_REPORT])
-    # st.stop()
-    return reports
+    series: pd.Series，数值列
+    periods: int, 同比的周期（如季度同比用4）
+    """
+    prev = series.shift(periods)
+    def calc(current, previous):
+        if previous == 0:
+            return np.nan  # 避免除零
+        return (current - previous) / abs(previous) * 100  # 用 abs 保证同比符号合理
+    return pd.Series([calc(c, p) for c, p in zip(series, prev)], index=series.index)
 
 
-##########################################################################################
-###############################  main start here #########################################
-##########################################################################################
-st.set_page_config(page_title="📈Financial Report", layout="wide")
-st.title("📈Financial Reprot Analysis")
+def plot_bar_quarter_go(df: pd.DataFrame, col: str, title_suffix: str = '', height: int = 300) -> go.Figure:
+    """
+    plot bar quarter with group mode
 
-with st.sidebar:
-    st_data_source = st.selectbox('select data source:', ['ths', 'east money', 'sina'], 0)
-    # st_slide_years = st.slider()
-    # st_sheet_type = st.selectbox('select sheet type')
-
-# =========================== stock list filter ================================================
-# get stock list df and df_col_maps
-with st.spinner('⏳ 正在加载表格...'):
-    df_stock_list = get_stock_list()
-    col_maps_dict = get_col_maps_dict()
-    df_stock_list['code'] = df_stock_list["code"].astype(str).str.zfill(6)
-
-st_stock_code = st.text_input("ℹ️Please input stock code, name or initial (eg: 600519 or 贵州茅台 or gzmt):")
-
-# variable declaration under if statement for future use
-df_stock_list_filterd = pd.DataFrame()
-stock_selected_row = None 
-
-# filter df_stock_list with input as filter condition
-st_stock_code = st_stock_code.strip()
-if st_stock_code:
-    # filter df with input
-    # df_stock_list_filterd = df_stock_list[(df_stock_list['code'].str.contains(st_stock_code, regex=False)) | 
-    #                 df_stock_list['name'].str.contains(st_stock_code, regex=False) | df_stock_list['initial'].str.contains(st_stock_code.upper(), regex=False)]
-    query_filter_expr = (
-        "code.str.contains(@st_stock_code, regex=False, na=False) "  # don't match na
-        "or name.str.contains(@st_stock_code, regex=False, na=False) "
-        "or initial.str.contains(@st_stock_code.upper(), regex=False, na=False)"
+    :param df: df need to be ploted. col is used as y data, x data is got from year of REPORT_DATE.
+    :param col: con in df for y data
+    :param title_suffix: col column name is used as title, title_sufifx is used as suffix if it's not ''.
+    :param height: height of the chart
+    """
+    df = df.copy()
+    df[QUARTER] = df[REPORT_DATE].dt.quarter.map(lambda x: f'Q{x}')
+    df[YEAR] = df[REPORT_DATE].dt.year
+    ### 根据col的数值大小计算文本显示在柱体外部的阈值, 阈值按照最大值的abs来设置
+    threshold = df[col].abs().max() * 0.3
+    df["textpos"] = df[col].apply(lambda val: 'inside' if abs(val)>threshold else 'outside')
+    ### 定义颜色映射（可自定义）
+    color_map = {'Q1':"#00CC41",'Q2':"#F86C53",'Q3':"#FAC363",'Q4':"#8B92F7"}
+    ### 画出bar图并进行显示设置
+    fig1 = go.Figure()
+    # 分组绘制每个季度
+    for quarter in ['Q1','Q2','Q3','Q4']:
+        df_q = df[df[QUARTER] == quarter]
+        fig1.add_trace(go.Bar(
+            x=df_q[YEAR],
+            y=df_q[col],
+            name=quarter,
+            text=df_q[col].map(value_to_str),  # 可以用 value_to_str 替代
+            # textposition='inside',      # 一直 inside
+            # insidetextanchor='middle',
+            cliponaxis=False,           # 不裁剪文字
+            marker_color=color_map[quarter]
+        ))
+    # fig1 = px.bar(df, x=YEAR, y=col, color=QUARTER, barmode='group', height=height,
+    #             text=df[col].map(value_to_str), category_orders={QUARTER: ['Q1', 'Q2', 'Q3', 'Q4']})
+    fig1.update_layout(barmode='group', bargap=0.15,
+        height = height,
+        # 设置legend
+        legend=dict(
+            x=0,
+            y=1,                # 往上移（>1 代表在绘图区上方）
+            orientation="h",      # 水平放置
+            yanchor="bottom",     # legend 底部对准 y=1
+            xanchor="left",
+            ),
+        # 设置图表title
+        title=dict(
+            text=f'{col} - {title_suffix}' if title_suffix else col,      # 用 ytitle 当作图表标题
+            x=0.5,           # x=0.5居中, x=1 最右侧
+            xanchor='center',
+            yanchor='top',
+            font=dict(size=12)),
+        # 不显示x和y轴title
+        yaxis_title=None,
+        xaxis_title=None,
+        uniformtext_minsize=11,     # 字体最小不能低于 12
+        uniformtext_mode='show',     # 强制显示，不自动缩放
+        # hovermode="x unified"      # 打开后在手机上的hover内容一直存在会遮挡数据，效果不太好
+        )
+    ### 设置bar上文本的位置，根据阈值计算的结果，按照trace来设置每个柱子文本显示的位置
+    for i, quarter in enumerate(['Q1', 'Q2', 'Q3', 'Q4']):
+        mask = df[QUARTER] == quarter
+        fig1.data[i].textposition = df.loc[mask, "textpos"]
+    # Plotly 在 group bars（分组柱状图）里，会把同一年份多个季度的柱子拆成多条 trace。
+    fig1.update_traces(
+        textfont_size=12,  # 文字大小（默认约10，根据需求调整，如12/14/16）
+        # textposition='inside',  # 文字放在柱子外部（避免内部拥挤），根据threashold来设置
+        textangle=90,  # 文字水平显示（原默认可能倾斜，更易读）
+        insidetextanchor='end',  # 若后续改为内部显示，文字居中 [start, end, middle, left, right]
+        # 设置hover template
+        hovertemplate = '%{x}<br>%{fullData.name}: %{text}<extra></extra>'
     )
-    df_stock_list_filterd = df_stock_list.query(query_filter_expr, engine='python')
-    df_stock_list_filterd.reset_index(drop=True, inplace=True)
-    df_stock_list_filterd.index += 1  # index for web-user should start from 1
-
-    # show df_stock_list_filterd if not empty else show "no stock found"
-    if not df_stock_list_filterd.empty:
-        st.success(f"✅  {len(df_stock_list_filterd)} stock codes found as bellow:")
-        st_stock_selected = st.dataframe(df_stock_list_filterd, width="stretch", 
-                     height=(len(df_stock_list_filterd)+1)*35 if len(df_stock_list_filterd)<5 else 5*35,
-                     selection_mode=['single-row'], on_select='rerun') 
-        
-        # df_stock_list_filterd只有一行时，不需要手动选择行，直接返回stock_selected_row=0，
-        if len(df_stock_list_filterd) == 1:
-            stock_selected_row = 0
-        
-        if len(st_stock_selected["selection"]["rows"])>0:
-            # stock_selected format - {"selection":{"rows":[], "columns":[], "cells":[]}}
-            stock_selected_row = st_stock_selected["selection"]["rows"][0]
-    else:
-        st.error('❌  no stock code found')
-st.markdown("---")
-# ========================================================================
-
-if stock_selected_row is None:
-    st.stop()  # don't enter bellow codes if stock is not selected
-else:
-    stock_code = df_stock_list_filterd.iloc[stock_selected_row, 0]
-    stock_name = df_stock_list_filterd.iloc[stock_selected_row, 1] 
-
-st.subheader(f'📊 {stock_name}({stock_code}) 财务报表分析 - {st_data_source}') # get stock code by stock_selected_row
+    fig1.update_xaxes(showgrid=True)
+    # fig1.update_yaxes(showgrid=True)
+    return fig1
 
 
-### ================= 下载三张原始报表，然后格式化报表，生成单季度和同比报表=================================
-with st.spinner("⏳ 正在下载数据，请稍候..."):
-    # stock_balance_sheet_by_report = get_balance_sheet_by_report(stock_code, DATA_SOURCE[st_data_source])
-    reports_raw = {k: v for k, v in get_all_reports_concurrently(stock_code, DATA_SOURCE[st_data_source]).items()}
-    # 计算报表新列，生成单季度和同比报表，使用cache_data修饰提升运行性能
-    reports = reports_cal(reports_raw, col_maps_dict)
-st.success("✅ 数据下载完成！")
 
+# plot bar chart grouped by quarter. x is year, y is col data. fig1 is col data, fig2 is data of col.pct_change(-4)
+def plot_bar_quarter_with_pct_go(df: pd.DataFrame, col: str, height: int = 300):
+    ### 计算同比数据
+    col_pct = col+'_同比'
+    #df[col_pct] = df[col].pct_change(-4)*100
+    df[col_pct] = safe_yoy(df[col], periods=-4)
 
-### ==================================== sidebar筛选选项 =========================================
-# 初始化st_quaters_filter，定义on_change函数防止季度选择为空，代码放到st.stop后面避免第一次没渲染按钮不高亮
-QUARTERS_OPTION = ['Q1', 'Q2', 'Q3', 'Q4']
-if 'st_quaters_filter' not in st.session_state:
-    st.session_state.st_quaters_filter = QUARTERS_OPTION
-    st.session_state.st_quaters_filter_pre = st.session_state.st_quaters_filter
-def st_quaters_filter_change():
-    # st_quaters_filter返回值是list
-    if len(st.session_state.st_quaters_filter) == 0:
-        st.session_state.st_quaters_filter = st.session_state.st_quaters_filter_pre
-    st.session_state.st_quaters_filter_pre = st.session_state.st_quaters_filter
+    fig1 = plot_bar_quarter_go(df, col, height)
+    fig2 = plot_bar_quarter_go(df, col_pct, height)
+    return fig1, fig2
 
-# 设置年份过滤
-with st.sidebar:
-    st.markdown('---')
-    # 拼接三张原始报表的报告期列，获得最大年份和最小年份
-    all_years = pd.concat([reports[report_name][REPORT_DATE] for report_name in [PROFIT_BY_REPORT, CASH_BY_REPORT, BALANCE_BY_REPORT]])
-    # all_years = pd.to_datetime(all_years, errors='coerce')
-    min_year = all_years.dt.year.min()
-    max_year = all_years.dt.year.max()
-    # slider 默认值设为全范围
-    st_years_filter = st.slider(
-        '选择报表时间范围：',
-        min_value=int(min_year),
-        max_value=int(max_year),
-        value=(int(max_year)-5, int(max_year))  # 默认选中整个范围
+# 画资产负债表饼图
+# col_maps_dict 报表映射df字典，df_balance [资产负债表-报告期]
+def plot_pie_balance(col_maps_dict, df_balance: pd.DataFrame, height):
+    cols_date = df_balance[REPORT_DATE].dt.strftime('%Y-%m').to_list()
+    st_date = st.selectbox('选择资产负债表饼图日期：', options=cols_date)
+    date_index = cols_date.index(st_date)
+
+    fig = make_subplots(rows=1, cols=2,
+        specs=[[{"type": "domain"}, {"type": "domain"}]],
+        subplot_titles=("资产", "负债"))
+    ### 资产项
+    df_col_map = col_maps_dict[BALANCE_BY_REPORT]
+    cols_asset = df_col_map[(df_col_map['item_group']=='流动资产') | (df_col_map['item_group']=='非流动资产')]['item']
+    cols_asset = [REPORT_DATE] + cols_asset.tolist()
+    df = df_balance[[col for col in cols_asset if col in df_balance.columns]]
+    # st.write(df)
+    colors = px.colors.qualitative.Set3
+    fig1 = go.Figure()
+    fig1.add_trace(go.Pie(labels=df.columns[1:], values=df.iloc[date_index,1:], text=df.iloc[date_index,1:].map(value_to_str),
+            textinfo="label+percent+text",
+            textposition="inside",   # 关键 "auto" "outside"
+            rotation=0,
+            sort=False,
+            outsidetextfont=dict(size=10),
+            insidetextfont=dict(size=14),
+            marker=dict(colors=colors),
+            hovertemplate=
+                "<b>%{label}</b><br>" +
+                "金额：%{text}<br>" +
+                "占比：%{percent:.2%}" +
+                "<extra></extra>"),
+                # row=1, col=1
+                )
+    fig1.update_layout(#legend=dict(x=0.9, y=0, bgcolor="rgba(255,255,255,0.6)"),
+                        margin=dict(l=0, r=0, t=50, b=0, autoexpand=True), height=height)
+    fig1.update_layout(showlegend=False)
+    
+    ### 负债项
+    cols_liab = df_col_map[(df_col_map['item_group']=='流动负债') | (df_col_map['item_group']=='非流动负债')]['item']
+    cols_liab = [REPORT_DATE] + cols_liab.tolist()
+    df = df_balance[[col for col in cols_liab if col in df_balance.columns]]
+    # st.write(df)
+    colors = px.colors.qualitative.Set3
+    fig2 = go.Figure()
+    fig2.add_trace(go.Pie(labels=df.columns[1:], values=df.iloc[date_index,1:], text=df.iloc[date_index,1:].map(value_to_str),
+            textinfo="label+percent+text",
+            textposition="inside",   # 关键 "auto" "outside"
+            rotation=0,
+            sort=False,
+            outsidetextfont=dict(size=10),
+            insidetextfont=dict(size=14),
+            marker=dict(colors=colors),
+            hovertemplate=
+                "<b>%{label}</b><br>" +
+                "金额：%{text}<br>" +
+                "占比：%{percent:.2%}" +
+                "<extra></extra>"),
+                # row=1, col=2
+                )
+    ### 设置显示效果
+    fig2.update_layout(#legend=dict(x=0.9, y=0, bgcolor="rgba(255,255,255,0.6)"),
+                        margin=dict(l=0, r=0, t=50, b=0, autoexpand=True), height=height)
+    fig2.update_layout(showlegend=False)
+    return fig1, fig2
+
+'''
+# px柱体上文字显示的效果不是很好，文字显示到画布以外就看不到了
+# plot bar chart grouped by quarter. x is year, y is col data. fig1 is col data, fig2 is data of col.pct_change(-4)
+def plot_bar_quarter_with_pct_px(df: pd.DataFrame, col: str, height: int = 300):
+    ### 计算同比数据
+    col_pct = col+'_同比'
+    #df[col_pct] = df[col].pct_change(-4)*100
+    df[col_pct] = safe_yoy(df[col], periods=-4)
+
+    ### 根据col的数值大小计算文本显示在柱体外部的阈值, 阈值按照最大值的abs来设置
+    threshold = df[col].abs().max() * 0.3
+    df["textpos"] = df[col].apply(lambda val: 'inside' if abs(val)>threshold else 'outside')
+    ### 画出bar图并进行显示设置
+    fig1 = px.bar(df, x=YEAR, y=col, color=QUARTER, barmode='group', height=height,
+                text=df[col].map(value_to_str), category_orders={QUARTER: ['Q1', 'Q2', 'Q3', 'Q4']})
+    fig1.update_layout(barmode='group', bargap=0.15,
+        # 设置legend
+        legend=dict(
+            x=0,
+            y=1,                # 往上移（>1 代表在绘图区上方）
+            orientation="h",      # 水平放置
+            yanchor="bottom",     # legend 底部对准 y=1
+            xanchor="left",
+            ),
+        # 设置图表title
+        title=dict(
+            text=col,      # 用 ytitle 当作图表标题
+            x=1,           # x=0.5居中, x=1 最右侧
+            xanchor='right',
+            yanchor='top',
+            font=dict(size=12)),
+        # 不显示x和y轴title
+        yaxis_title=None,
+        xaxis_title=None,
+        uniformtext_minsize=12,     # 字体最小不能低于 12
+        uniformtext_mode='show'     # 强制显示，不自动缩放
+        )
+    ### 根据阈值计算的结果，按照trace来设置每个柱子文本显示的位置
+    # 按 trace（季度）赋值
+    for i, quarter in enumerate(['Q1', 'Q2', 'Q3', 'Q4']):
+        mask = df[QUARTER] == quarter
+        fig1.data[i].textposition = df.loc[mask, "textpos"]
+    # Plotly 在 group bars（分组柱状图）里，会把同一年份多个季度的柱子拆成多条 trace。
+    fig1.update_traces(
+        textfont_size=12,  # 文字大小（默认约10，根据需求调整，如12/14/16）
+        #textposition='inside',  # 文字放在柱子外部（避免内部拥挤）
+        textangle=90,  # 文字水平显示（原默认可能倾斜，更易读）
+        insidetextanchor='end'  # 若后续改为内部显示，文字居中 [start, end, middle, left, right]
     )
-    # 季度筛选
-    st_quarters_filter = st.segmented_control('选择显示的季度数据：', options=QUARTERS_OPTION, key='st_quaters_filter', on_change=st_quaters_filter_change, selection_mode='multi')
-    st_quarters_filter = [int(q[1]) for q in st_quarters_filter]  # 从Q1中提取季度数字
-    st_Q_latest = st.checkbox('最新季度', value=True)
-    st.markdown('---')
-
-    st_na_invisible = st.checkbox('🙈隐藏空行', True)
-    # 只显示col_maps.xlsx中的item列
-    st_show_col_maps_only = st.checkbox('🙈隐藏没在col_maps中的列', True)
-    # 设置图标的高度
-    st_chart_height = st.slider('图表高度：', min_value=200, max_value=600, value=300, step=1)
-
-### ===================================  对报表进行筛选 ==========================================
-### 对各报表进行筛选 1. slider年份筛选   2. 隐藏空值筛选   3. col_maps中item列筛选
-start_year, end_year = st_years_filter
-for report_name, df in reports.items():
-    # 年份筛选
-    df = df[df[REPORT_DATE].dt.year.between(start_year, end_year)]
-    # 季度筛选
-    df = df[df[REPORT_DATE].dt.quarter.isin(st_quarters_filter)]
-    if st_Q_latest and df.iloc[0][REPORT_DATE]!=reports[report_name].iloc[0][REPORT_DATE]:
-        new_row = reports[report_name].iloc[[0]]
-        df = pd.concat([new_row, df], axis=0)
-    reports_filtered[report_name] = df  
-    if st_na_invisible:
-        reports_filtered[report_name] = reports_filtered[report_name].dropna(how='all', axis=1)
-    # 只有下面7张表需要进行col_maps筛选和排序，综合分析等列都是自定义的，不需要筛选
-    if st_show_col_maps_only and report_name in [PROFIT_BY_REPORT, CASH_BY_REPORT, BALANCE_BY_REPORT, 
-                                PROFIT_BY_QUARTER, CASH_BY_QUARTER, PROFIT_PCT_BY_REPORT, PROFIT_PCT_BY_QUARTER]:
-        reports_filtered[report_name] = reports_filtered[report_name][[col for col in col_maps_dict[report_name]['item'] if col in reports_filtered[report_name].columns]]
+    fig1.update_xaxes(showgrid=True)
+    # fig1.update_yaxes(showgrid=True)
 
 
-### ======================================= 数据可视化  ==========================================
-# 报表可视化category的segmented_control，使用on_change函数监测控件值，为空的话重置为前一个值
-### 避坑：st_category默认按钮在第一次运行不会高亮。如果把session_state初始化放在最前面，中间的st.stop会打断st_category控件初始化和渲染。
-# session_state初始化需要放到这里可以解决被st.stop打断。
-CATEGORY_OPTIONS=['📋综合分析', '📊图表', '📅表格']
-if 'st_category' not in st.session_state:
-    st.session_state.st_category = CATEGORY_OPTIONS[1]
-    st.session_state.st_category_pre = st.session_state.st_category
-def st_category_change():
-    # st_category返回值是字符串
-    if st.session_state.st_category == None:
-        st.session_state.st_category = st.session_state.st_category_pre
-    st.session_state.st_category_pre = st.session_state.st_category
+    ### 根据col的数值大小计算文本显示在柱体外部的阈值, 阈值按照最大值的abs来设置
+    threshold = df[col_pct].abs().max() * 0.3
+    df["textpos"] = df[col_pct].apply(lambda val: 'inside' if abs(val) > threshold else 'outside')
+    ### 画出bar图并进行显示设置
+    fig2 = px.bar(df, x=YEAR, y=col_pct, color=QUARTER, barmode='group', height=height,
+                text=df[col_pct].map(value_to_str), category_orders={QUARTER: ['Q1', 'Q2', 'Q3', 'Q4']})
+    fig2.update_layout(barmode='group', bargap=0.15,
+         # 设置legend
+        legend=dict(
+            x=0,
+            y=1,                # 往上移（>1 代表在绘图区上方）
+            orientation="h",      # 水平放置
+            yanchor="bottom",     # legend 底部对准 y=1
+            xanchor="left",
+            ),
+        # 设置图表title
+        title=dict(
+            text=col_pct,      # 用 ytitle 当作图表标题
+            x=1,           # x=0.5居中, x=1 最右侧
+            xanchor='right',
+            yanchor='top',
+            font=dict(size=12)),
+        # 不显示x和y轴title
+        yaxis_title=None,
+        xaxis_title=None,
+        uniformtext_minsize=12,     # 字体最小不能低于 12
+        uniformtext_mode='show'     # 强制显示，不自动缩放
+        )
+    ### 根据阈值计算的结果，按照trace来设置每个柱子文本显示的位置
+    # 按 trace（季度）赋值
+    for i, quarter in enumerate(['Q1', 'Q2', 'Q3', 'Q4']):
+        mask = df[QUARTER] == quarter
+        fig2.data[i].textposition = df.loc[mask, "textpos"]
+    fig2.update_traces(
+        textfont_size=12,  # 文字大小（默认约10，根据需求调整，如12/14/16）
+        # textposition=df["textpos"],  # 文字放在柱子外部（避免内部拥挤）
+        textangle=90,  # 文字水平显示（原默认可能倾斜，更易读）
+        insidetextanchor='end'  # 若后续改为内部显示，文字居中 [start, end, middle, left, right]
+    )
+    fig2.update_xaxes(showgrid=True)
+    return fig1, fig2
 
-# st.write(time.strftime('%H:%M:%S'))
-@st.fragment
-def show_report_category():
-    # 使用st.tabs没有局部刷新功能，改变tabs下的任何控件都会执行所有tabs下的代码，切换tab不再执行任何代码，切换会快，但是改变控件会耗时。st.tabs和st.segmented_control各有利弊
-    # 使用st.segmented_control 可以进行局部刷新，fragment下的控件更新只更新fragment下的代码，fragment支持子fragment，可以做到局部中的局部刷新
-    # tab1_summary, tab2_charts, tab3_tables = st.tabs(['📋综合分析', '📊图表', '📅表格'], default= '📅表格')
-    st_category = st.segmented_control('选择显示分类：: ', key='st_category', on_change=st_category_change, options=CATEGORY_OPTIONS)
-    # with tab1_summary:
-    if st_category == CATEGORY_OPTIONS[0]:
-        pass
+def plot_bar_quarter_with_pct_plt(df: pd.DataFrame, col: str):
+    # 格式化图表上要显示的值
+    def val_formatter(val):
+        if val==0:
+            return ''
+        if abs(val) >= 1e8:
+            return f"{val/1e8:.2f}亿"
+        elif abs(val) >= 1e4:
+            return f"{val/1e4:.1f}万"
+        else:
+            return f"{val:.2f}"
+    col_pct = col+'_同比'
+    df[col_pct] = df[col].pct_change(-4)*100
+    fig1, ax1 = plt.subplots(figsize=(10, 3))
+    pv1 = df.pivot(index=YEAR, columns=QUARTER, values=col)
+    pv1.plot.bar(ax=ax1, width=0.85)  # width 可调整bar的宽度和间距
+    ax1.set_title(col)
+    # Y 轴刻度格式化（关键）
+    ax1.yaxis.set_major_formatter(FuncFormatter(lambda v, pos: val_formatter(v)))
+    # 在柱子内添加竖排文字
+    for p in ax1.patches:
+        value = p.get_height()
+        # ha 水平对齐，va 垂直对齐
+        ax1.annotate(f"{val_formatter(value)}",
+                     (p.get_x() + p.get_width() / 2, p.get_height()),
+                     ha='center', va='top', fontsize=11, rotation=90, fontweight='bold')
+    ax1.grid(axis='both', linestyle='--', alpha=0.5)
 
-    ### tab2 图表可视化
-    # with tab2_charts:
-    if st_category == CATEGORY_OPTIONS[1]:
-        # 使用 segmented_control 来选择报表
-        st_report_choice = st.segmented_control('选择报表：', options=[PROFIT_BY_REPORT, PROFIT_BY_QUARTER, CASH_BY_REPORT, CASH_BY_QUARTER, BALANCE_BY_REPORT], default=PROFIT_BY_QUARTER)
-        # 图表 利润表-报告期 和 利润表-单季度
-        if st_report_choice==PROFIT_BY_REPORT or st_report_choice==PROFIT_BY_QUARTER:
-            if st_report_choice==PROFIT_BY_REPORT:
-                df_plot1 = reports_filtered[PROFIT_BY_REPORT].copy()
-                df_plot2 = reports_filtered[PROFIT_PCT_BY_REPORT].copy()
-            if st_report_choice==PROFIT_BY_QUARTER:
-                df_plot1 = reports_filtered[PROFIT_BY_QUARTER].copy()
-                df_plot2 = reports_filtered[PROFIT_PCT_BY_QUARTER].copy()
-            ### 使用multiselect 过滤
-            cols = df_plot1.select_dtypes(include=['float', 'int']).columns
-            # default_cols需要检测要显示的列是否存在，有些数据缺失可能没有计算出这些列（如银行和保险行业）
-            default_cols = [col for col in ['*营业总收入', '*毛利润', '*核心利润', '*净利润', '*归母净利润', '*扣非净利润'] if col in cols]
-            ### 避坑：实现multiselect defualt option记忆功能。本控件在if条件下，if在true和false切换后，控件会重新创建，
-            # 所以使用key参数的session_state没有记忆功能，重新创建会重新初始化。可以在此处创建一个命名与本控件无关的session变量来保存和调用记忆。
-            st_selected_cols = st.multiselect('选择要显示的列：', options=cols, default=default_cols)
-            title_suffix = st_report_choice[st_report_choice.index('-')+1::]
-            for col in st_selected_cols:
-                fig1 = plot_bar_quarter_go(df_plot1, col, title_suffix=title_suffix, height=st_chart_height)
-                st.plotly_chart(fig1, width='stretch')
-                # 有些col在主df里面有，同比计算后可能没有，需要进行判断再画
-                if col in df_plot2.columns:
-                    fig2 = plot_bar_quarter_go(df_plot2, col, title_suffix=title_suffix + '同比', height=st_chart_height)
-                    st.plotly_chart(fig2, width='stretch')
+    # ====================  fig2 ===========================
+    fig2, ax2 = plt.subplots(figsize=(10, 3))
+    df.pivot(index=YEAR, columns=QUARTER, values=col_pct).plot.bar(ax=ax2)
+    ax2.set_title(col_pct)
+    # Y 轴刻度格式化（关键）
+    ax2.yaxis.set_major_formatter(FuncFormatter(lambda v, pos: val_formatter(v)))
+    # 在柱子内添加竖排文字
+    for p in ax2.patches:
+        value = p.get_height()
+        # ha 水平对齐，va 垂直对齐
+        ax2.annotate(f"{val_formatter(value)}",
+                     (p.get_x() + p.get_width() / 2, p.get_height()),
+                     ha='center', va='top', fontsize=11, rotation=90, fontweight='bold')
+    ax2.grid(axis='both', linestyle='--', alpha=0.5)
 
-        # 图表 现金流量表-报告期 和 现金流量表-单季度
-        if st_report_choice==CASH_BY_REPORT or st_report_choice==CASH_BY_QUARTER:
-            df_plot1 = reports_filtered[st_report_choice].copy()
-            cols = df_plot1.select_dtypes(include=['float', 'int']).columns
-            default_cols = [col for col in ['销售商品、提供劳务收到的现金', '购建固定资产、无形资产和其他长期资产支付的现金', '取得子公司及其他营业单位支付的现金净额', 
-                        '经营活动产生的现金流量净额', '投资活动产生的现金流量净额','筹资活动产生的现金流量净额'] if col in cols]
-            st_selected_cols = st.multiselect('请选择要显示的列：', options=cols, default=default_cols)
-            for col in st_selected_cols:
-                fig1 = plot_bar_quarter_go(df_plot1, col, title_suffix='', height=st_chart_height)
-                st.plotly_chart(fig1, width='stretch')
-        # 图表 资产负债表-报告期
-        if st_report_choice==BALANCE_BY_REPORT:
-            df_plot1 = reports_filtered[st_report_choice].copy()
-            cols = df_plot1.select_dtypes(include=['float', 'int']).columns
-            default_cols = [col for col in ['应收票据及应收账款', '应收款项融资', '存货', 
-                        '固定资产合计', '在建工程合计','商誉', '合同负债', '预收款项'] if col in cols]
-            st_selected_cols = st.multiselect('请选择要显示的列：', options=cols, default=default_cols)
-            for col in st_selected_cols:
-                fig1 = plot_bar_quarter_go(df_plot1, col, title_suffix='', height=st_chart_height)
-                st.plotly_chart(fig1, width='stretch')  
-
-
-    # with tab3_tables:
-    if st_category == CATEGORY_OPTIONS[2]:
-        for report_name, df in reports_filtered.items():
-            with st.expander(f'{report_name}'):
-                df_filtered = df
-                # 下面进行网页显示处理
-                # 格式化'报告期'列显示格式
-                df_filtered = df_filtered.map(value_to_str)
-                # df转置并设置第一行报告期为列名
-                df_filtered = df_filtered.T
-                # 报告期设置成列名columns
-                df_filtered.columns = df_filtered.iloc[0]
-                df_filtered = df_filtered[1:]
-                # 显示，空值替换为 '-'
-                st_table_selected_rows = st.dataframe(df_filtered.map(value_to_str), on_select='rerun',
-                    column_config={
-                    "_index": st.column_config.Column(
-                    "报告期",  # 可以在这里设置索引列的新标题
-                    width=120 if '现金流量表' in report_name else 100,  # 调整宽度，例如 "small", "medium", "large"
-                    ),
-                    # 也可以在这里配置其他数据列...
-                    })
-                # 画出表格中选中的数据行，行row对应df的列row+1
-                if len(st_table_selected_rows['selection']['rows']) > 0:
-                    for row in st_table_selected_rows['selection']['rows']:
-                        if df.iloc[:,row+1].dtype not in ['float', 'int']:
-                            st.markdown(f'"{df.columns[row+1]}" 不是数值类型')
-                        else:
-                            # 显示的table是df的转置，df的列对应table的行row+1
-                            fig1 = plot_bar_quarter_go(df, df.columns[row+1], title_suffix=f'[{report_name}]', height=st_chart_height)
-                            st.plotly_chart(fig1, width='stretch')
-
-show_report_category()
+    return fig1, fig2
+'''
 
 
+
+
+    
