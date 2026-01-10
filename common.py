@@ -297,10 +297,10 @@ def plot_pie_balance(col_maps_dict, df_balance: pd.DataFrame, height):
     cols_date = df_balance[REPORT_DATE].dt.strftime('%Y-%m').to_list()
     st_date = st.selectbox('选择资产负债表饼图日期：', options=cols_date)
     date_index = cols_date.index(st_date)
-
-    fig = make_subplots(rows=1, cols=2,
-        specs=[[{"type": "domain"}, {"type": "domain"}]],
-        subplot_titles=("资产", "负债"))
+    
+    # fig = make_subplots(rows=1, cols=2,
+    #     specs=[[{"type": "domain"}, {"type": "domain"}]],
+    #     subplot_titles=("资产", "负债"))
     ### 资产项
     df_col_map = col_maps_dict[BALANCE_BY_REPORT]
     cols_asset = df_col_map[(df_col_map['item_group']=='流动资产') | (df_col_map['item_group']=='非流动资产')]['item']
@@ -311,11 +311,12 @@ def plot_pie_balance(col_maps_dict, df_balance: pd.DataFrame, height):
     fig1 = go.Figure()
     fig1.add_trace(go.Pie(labels=df.columns[1:], values=df.iloc[date_index,1:], text=df.iloc[date_index,1:].map(value_to_str),
             textinfo="label+percent+text",
-            textposition="inside",   # 关键 "auto" "outside"
+            textposition="inside",   # 关键 "inside"  "auto" "outside"
             rotation=0,
             sort=False,
+            # insidetextorientation="radial",
             outsidetextfont=dict(size=10),
-            insidetextfont=dict(size=14),
+            insidetextfont=dict(size=12),
             marker=dict(colors=colors),
             hovertemplate=
                 "<b>%{label}</b><br>" +
@@ -325,7 +326,7 @@ def plot_pie_balance(col_maps_dict, df_balance: pd.DataFrame, height):
                 # row=1, col=1
                 )
     fig1.update_layout(#legend=dict(x=0.9, y=0, bgcolor="rgba(255,255,255,0.6)"),
-                        margin=dict(l=0, r=0, t=50, b=0, autoexpand=True), height=height)
+                        margin=dict(l=5, r=5, t=5, b=5, autoexpand=True), height=height)
     fig1.update_layout(showlegend=False)
     
     ### 负债项
@@ -337,11 +338,12 @@ def plot_pie_balance(col_maps_dict, df_balance: pd.DataFrame, height):
     fig2 = go.Figure()
     fig2.add_trace(go.Pie(labels=df.columns[1:], values=df.iloc[date_index,1:], text=df.iloc[date_index,1:].map(value_to_str),
             textinfo="label+percent+text",
-            textposition="inside",   # 关键 "auto" "outside"
+            textposition="inside",   # 关键 "inside"  "auto" "outside"
             rotation=0,
             sort=False,
+            # insidetextorientation="radial",
             outsidetextfont=dict(size=10),
-            insidetextfont=dict(size=14),
+            insidetextfont=dict(size=12),
             marker=dict(colors=colors),
             hovertemplate=
                 "<b>%{label}</b><br>" +
@@ -352,7 +354,7 @@ def plot_pie_balance(col_maps_dict, df_balance: pd.DataFrame, height):
                 )
     ### 设置显示效果
     fig2.update_layout(#legend=dict(x=0.9, y=0, bgcolor="rgba(255,255,255,0.6)"),
-                        margin=dict(l=0, r=0, t=50, b=0, autoexpand=True), height=height)
+                        margin=dict(l=5, r=5, t=5, b=5, autoexpand=True), height=height)
     fig2.update_layout(showlegend=False)
     return fig1, fig2
 
