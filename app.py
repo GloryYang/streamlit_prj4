@@ -17,6 +17,7 @@ def get_stock_list() -> pd.DataFrame:
     return df
 @st.cache_data(ttl=3600, show_spinner=False)
 # col_maps_dict {report_name: df in sheet_name['ths', 'em', 'sina', 'item', 'item_group']}
+# CROSS_REPORT only have 'item'. {CROSS_REPORT: 'item'}
 def get_col_maps_dict() -> dict[str, pd.DataFrame]:
     sheet_map = {PROFIT_BY_REPORT: 'profit',
                  CASH_BY_REPORT: 'cash',
@@ -29,6 +30,8 @@ def get_col_maps_dict() -> dict[str, pd.DataFrame]:
                  CASH_PCT_BY_REPORT: 'cash',
                  CASH_PCT_BY_QUARTER: 'cash',
                  BALANCE_PCT_BY_REPORT: 'balance',
+
+                 CROSS_REPORT: 'cross',
                  }
     # sheets_df is a dict. {sheet_name: df in each sheet}
     sheets_df_dict = pd.read_excel(r'col_maps.xlsx', sheet_name=list(sheet_map.values()), header=0)
@@ -121,12 +124,10 @@ def get_all_reports_concurrently(code: str, source: str = 'ths') -> dict[str, pd
 # 计算报表新列，生成单季度和同比报表, reports使用的是全局变量
 @st.cache_data(ttl=3600, show_spinner=False)
 def reports_download_and_calculate(stock_code: str, st_data_source:str, col_maps_dict: dict):
-    st.write(f'reprots_cal start {time.strftime("%H:%M:%S")}')
      ### 从st_data_source下载原始报表
      # reports_raw = {k: v for k, v in get_all_reports_concurrently(stock_code, DATA_SOURCE[st_data_source]).items()}
     reports_raw = get_all_reports_concurrently(stock_code, DATA_SOURCE[st_data_source])
     reports = reports_raw #{k: v.copy() for k, v in reports_raw.items()}
-    st.write(f'reprots_cal down {time.strftime("%H:%M:%S")}')
 
     ### 先格式化来自(ths, em, sina)的三张原始财务报表，统一格式，方便后续进行操作
     for report_name in [BALANCE_BY_REPORT, PROFIT_BY_REPORT, CASH_BY_REPORT]:
@@ -195,7 +196,7 @@ def reports_download_and_calculate(stock_code: str, st_data_source:str, col_maps
             df['四费费率[%]'] = df.eval("(`销售费用` + `管理费用` + `研发费用` + `财务费用`)/`营业总收入`*100")
         elif {'营业总收入', '销售费用', '管理费用', '财务费用'}.issubset(df.columns):
             df['三费费率[%]'] = df.eval("(`销售费用` + `管理费用` + `财务费用`)/`营业总收入`*100")
-
+    #####################################
     ### 计算 [现金流量表-报告期同比] 
     df= reports[CASH_BY_REPORT]
     reports[CASH_PCT_BY_REPORT] = df.select_dtypes(include=(float, int)).apply(safe_yoy)
@@ -213,10 +214,10 @@ def reports_download_and_calculate(stock_code: str, st_data_source:str, col_maps
     ### 计算 [综合分析] 报表。先从各原始报表中取需要的数据列，再merg和sort
     profit_cols = [REPORT_DATE, '*营业总收入', '*毛利润', '*核心利润', '*营业利润', '*净利润', '营业成本']
     balance_cols = [REPORT_DATE, '资产总计', '负债合计', '归属于母公司股东权益总计', '股东权益合计', 
-                    '应收票据及应收账款', '应收款项融资', '存货', '固定资产合计', '商誉',
-                    '应付票据及应付账款', '预收款项', '合同负债', '短期借款','长期借款', '应付债券']
-    cash_cols = [REPORT_DATE, '期末现金及现金等价物余额', '销售商品、提供劳务收到的现金', '经营活动产生的现金流量净额',
-                 '投资活动产生的现金流量净额', '筹资活动产生的现金流量净额']
+                    '应收票据及应收账款', '其中:应收账款', '应收款项融资', '存货', '固定资产合计', '商誉',
+                    '应付票据及应付账款', '其中:应付账款', '预收款项', '合同负债', '短期借款','长期借款', '应付债券']
+    cash_cols = [REPORT_DATE, '期末现金及现金等价物余额']  #, '销售商品、提供劳务收到的现金', '经营活动产生的现金流量净额',
+    #              '投资活动产生的现金流量净额', '筹资活动产生的现金流量净额']
     df1 = reports[PROFIT_BY_REPORT][[col for col in profit_cols if col in reports[PROFIT_BY_REPORT].columns]]
     df2 = reports[BALANCE_BY_REPORT][[col for col in balance_cols if col in reports[BALANCE_BY_REPORT].columns]]
     df3 = reports[CASH_BY_REPORT][[col for col in cash_cols if col in reports[CASH_BY_REPORT].columns]]
@@ -258,17 +259,77 @@ def reports_download_and_calculate(stock_code: str, st_data_source:str, col_maps
     # 固定资产总资产比[%]
     if {'固定资产合计', '资产总计'}.issubset(df.columns):
         df['固定资产总资产比[%]'] = df['固定资产合计']/df['资产总计'] * 100
-    # 自定义列排序
-    cal_cols = [col for col in ['应收应付总额比[%]', '应收总额营收比[%]', '存货营业成本比[%]', '预收总额营收比[%]',  
-                '有息负债', '有息负债现金等价物比[%]', '资产负债率[%]', '固定资产总资产比[%]'] if col in df.columns]
-    for idx, col in enumerate(cal_cols):
-        # 第一列为报告期，关键指标依次插入到报告期后面
-        idx += 1
-        df.insert(idx, col, df.pop(col))
+    ## 计算资产周转率和资产周转天数
+    # 总资产周转率 = 营业收入 / 资产总计-平均资产
+    # 固定资产周转率 = 营业收入 / 固定资产合计-平均资产
+    # 应收账款周转率 = 营业收入 / 应收账款-平均资产产
+    # 存货产周转率 = 营业成本 / 存货-平均资产
+    # 应付账款周转率 = 营业成本 / 应付账款-平均资产
+    # 现金周转天数 = 应收周转天数 + 存货周转天数 - 应付账款周转天数
+    df['year'] = df[REPORT_DATE].dt.year
+    df['quarter'] = df[REPORT_DATE].dt.quarter
+    # 定义周转率映射字典。{周转率名称: 资产负债表项目名称, ...}
+    cols_dict = {'总资产': '资产总计', 
+                 '固定资产': '固定资产合计', 
+                 '应收账款': '其中:应收账款',   # '应收票据及应收账款'   '其中:应收账款'
+                 '存货': '存货', 
+                 '应付账款': '其中:应付账款',
+                 'tmp1' :'股东权益合计'}
+    for key, col in cols_dict.items():
+        if col in df.columns:
+            # year_end_asset是series类型，只包含每年第四季度的资产总计，可以使用get(index)方法得到资产，index不存在返回NaN
+            year_end_asset = df[df['quarter']==4].set_index('year')[col]
+            # 从year_end_asset series中获取去年年末资产值，使用get方法不存在返回NaN
+            df[col + '-去年末'] = df['year'].map(lambda year: year_end_asset.get(year-1))
+            df[col + '-平均'] = (df[col] + df[col + '-去年末'])/2
+            # 计算周转率
+            if col in ['资产总计', '固定资产合计', '其中:应收账款']:
+                df[key + '周转率'] = df['*营业总收入'] / df[col + '-平均']
+                # 使用周转率计算周转天数, i为quater
+                for i in range(1, 5):
+                    mask = df['quarter']==i
+                    df.loc[mask, key + '周转天数'] = df.loc[mask, key + '周转率'].map(lambda x: 360/x/4*i)
+            elif col in ['存货', '其中:应付账款']:
+                df[key + '周转率'] = df['营业成本'] / df[col + '-平均']
+                # 使用周转率计算周转天数, i为quater
+                for i in range(1, 5):
+                    mask = df['quarter']==i
+                    df.loc[mask, key + '周转天数'] = df.loc[mask, key + '周转率'].map(lambda x: 360/x/4*i)
+            
+            # pop删除临时列
+            df.pop(col + '-去年末')
+            # df.pop(col + '-平均')
+            # st.write(df1)
+    if {'应收账款周转天数', '存货周转天数', '应付账款周转天数'}.issubset(df.columns):
+        df['现金周转天数'] = df.eval('`应收账款周转天数` + `存货周转天数` - `应付账款周转天数`')
+    # pop删除临时列
+    df.pop('year')
+    df.pop('quarter')
+    ## 计算杜邦分析指标
+    if {'*净利润', '股东权益合计-平均'}.issubset(df.columns):
+        df['净资产收益率[%]'] = df['*净利润'] / df['股东权益合计-平均'] * 100
+    if {'*净利润', '资产总计-平均'}.issubset(df.columns):
+        df['总资产收益率[%]'] = df['*净利润'] / df['资产总计-平均'] * 100
+    if {'*净利润', '*营业总收入'}.issubset(df.columns):
+        df['净利润率[%]'] = df['*净利润'] / df['*营业总收入'] * 100
+    if {'资产总计-平均', '股东权益合计-平均'}.issubset(df.columns):
+        df['权益乘数'] = df['资产总计-平均'] / df['股东权益合计-平均']
+
+    ## 自定义列排序
+    # cal_cols = [col for col in ['应收应付总额比[%]', '应收总额营收比[%]', '存货营业成本比[%]', '预收总额营收比[%]',  
+    #             '有息负债', '有息负债现金等价物比[%]', '资产负债率[%]', '固定资产总资产比[%]'] if col in df.columns]
+    # for idx, col in enumerate(cal_cols):
+    #     # 第一列为报告期，关键指标依次插入到报告期后面
+    #     idx += 1
+    #     df.insert(idx, col, df.pop(col))
+    cross_items = col_maps_dict[CROSS_REPORT]['item'].to_list()
+    # col_maps中的列放到前面，没在里面的放到后面
+    col_orders = [c for c in cross_items if c in df.columns] + [c for c in df.columns if c not in cross_items]
+    df = df[col_orders]
     reports[CROSS_REPORT] = df  # merge函数产生新的dataframe，需要把df再赋值回去
     # st.write( reports[CROSS_REPORT])
     # st.stop()
-    st.write(f'reprots_cal end {time.strftime("%H:%M:%S")}')
+     #####################################
     return reports
 
 
@@ -303,7 +364,6 @@ if st_stock_code:
     @st.cache_data(ttl=3600)
     def get_df_stock_list_filterd(st_stock_code: str, df_stock_list: pd.DataFrame):
         st_stock_code = st_stock_code
-        st.write(f'get_df_stock_list_filterd {time.strftime("%H:%M:%S")}')
         # filter df with input
         # df_stock_list_filtered = df_stock_list[(df_stock_list['code'].str.contains(st_stock_code, regex=False)) | 
         #                 df_stock_list['name'].str.contains(st_stock_code, regex=False) | df_stock_list['initial'].str.contains(st_stock_code.upper(), regex=False)]
@@ -402,7 +462,6 @@ with st.sidebar:
 ### ===================================  对报表进行筛选 ==========================================
 ### 对各报表进行筛选 1. slider年份筛选   2. 季度筛选   3. 隐藏空值筛选   4. col_maps中item列筛选
 start_year, end_year = st_years_filter
-st.write(f'filter start {time.strftime("%H:%M:%S")}')
 
 for report_name, df in reports.items():
     # 年份筛选
@@ -415,13 +474,11 @@ for report_name, df in reports.items():
     reports_filtered[report_name] = df  
     if st_na_invisible:
         reports_filtered[report_name] = reports_filtered[report_name].dropna(how='all', axis=1)
-    # 只有下面7张表需要进行col_maps筛选和排序，综合分析等列都是自定义的，不需要筛选
+    # 下面7张表需要进行col_maps筛选和排序。CROSS_REPORT报表计算需要的列没在col_maps中，可以隐藏。
     if st_show_col_maps_only and report_name in [PROFIT_BY_REPORT, CASH_BY_REPORT, BALANCE_BY_REPORT, 
                                 PROFIT_BY_QUARTER, CASH_BY_QUARTER, PROFIT_PCT_BY_REPORT, PROFIT_PCT_BY_QUARTER,
-                                CASH_PCT_BY_REPORT, CASH_PCT_BY_QUARTER, BALANCE_PCT_BY_REPORT]:
+                                CASH_PCT_BY_REPORT, CASH_PCT_BY_QUARTER, BALANCE_PCT_BY_REPORT, CROSS_REPORT]:
         reports_filtered[report_name] = reports_filtered[report_name][[col for col in col_maps_dict[report_name]['item'] if col in reports_filtered[report_name].columns]]
-
-st.write(f'filter end {time.strftime("%H:%M:%S")}')
 
 ### ======================================= 数据可视化  ==========================================
 # 报表可视化category的segmented_control，使用on_change函数监测控件值，为空的话重置为前一个值
@@ -445,7 +502,7 @@ def show_report_category():
     st_category = st.segmented_control('选择显示分类：: ', key='st_category', on_change=st_category_change, options=CATEGORY_OPTIONS)
     # with tab1_summary:
     if st_category == CATEGORY_OPTIONS[0]:
-        pass
+        st.dataframe()
 
     ### tab2 图表可视化
     # with tab2_charts:
